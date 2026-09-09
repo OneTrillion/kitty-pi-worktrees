@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { branchNameError } from "./branch.js";
+import { branchNameError } from "./branch.ts";
 
 export const PROTOCOL_VERSION = 1;
 export const MAX_REQUEST_BYTES = 16 * 1024;

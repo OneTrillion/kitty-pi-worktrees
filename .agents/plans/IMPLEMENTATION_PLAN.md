@@ -73,7 +73,7 @@ Plan for the project to contain:
 - `test/` — tests for this project’s Git, protocol, and launcher behavior
 - `README.md` — installation, security model, commands, and workflow
 
-The exact build tooling can be selected during scaffolding, but the host launcher and extension should be released from the same source revision so their protocol remains compatible.
+Use Node.js 24+ and keep dependencies minimal. AI-only plans and handoff notes belong under `.agents/`; user/contributor documentation remains with the project. The host launcher and extension should be released from the same source revision so their protocol remains compatible.
 
 ## 6. Host launcher/supervisor
 

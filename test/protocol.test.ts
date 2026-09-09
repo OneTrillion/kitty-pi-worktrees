@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { RequestSchema, ResponseSchema, type Request, type Worktree } from "../src/shared/protocol.js";
+import { RequestSchema, ResponseSchema, type Request, type Worktree } from "../src/shared/protocol.ts";
 
 const id = "a".repeat(64);
 export const requests: Request[] = [

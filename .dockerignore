@@ -1,0 +1,11 @@
+# Only build inputs enter the Docker context; never AI logs, Git data or credentials.
+**
+!package.json
+!package-lock.json
+!tsconfig.json
+!tsconfig.build.json
+!src/
+!src/**
+!container/
+!container/Dockerfile
+!container/start.sh

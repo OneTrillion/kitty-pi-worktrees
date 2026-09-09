@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { assertBranchName } from "../shared/branch.js";
+import { assertBranchName } from "../shared/branch.ts";
 
 const execFileAsync = promisify(execFile);
 

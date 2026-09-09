@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { isAbsolute, join } from "node:path";
-import { assertBranchName } from "../shared/branch.js";
+import { assertBranchName } from "../shared/branch.ts";
 
 function digest(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { FrameDecoder, decodeRequest, decodeResponse, encodeRequest, encodeResponse } from "../src/shared/framing.js";
-import { MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, type Request } from "../src/shared/protocol.js";
+import { FrameDecoder, decodeRequest, decodeResponse, encodeRequest, encodeResponse } from "../src/shared/framing.ts";
+import { MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, type Request } from "../src/shared/protocol.ts";
 
 const request: Request = { version: 1, op: "create-or-open", branch: "café/修正" };
 function rawFrame(body: Buffer): Buffer {

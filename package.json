@@ -3,18 +3,17 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22.19.0" },
+  "engines": { "node": ">=24.0.0" },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test test/*.test.ts",
+    "test": "node --test test/*.test.ts",
     "check": "npm run typecheck && npm test && npm run build"
   },
   "dependencies": { "zod": "4.1.12" },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "0.84.4",
-    "@types/node": "22.19.19",
-    "tsx": "4.20.6",
+    "@types/node": "24.13.3",
     "typescript": "5.9.3"
   }
 }

@@ -2,7 +2,7 @@ import { TextDecoder } from "node:util";
 import {
   MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, RequestSchema, ResponseSchema,
   type Request, type Response,
-} from "./protocol.js";
+} from "./protocol.ts";
 
 /** A connection carries exactly one frame: uint32 BE length, then UTF-8 JSON. */
 function encode(value: unknown, maxBytes: number): Buffer {
@@ -35,10 +35,13 @@ export class FrameDecoder {
   private failed = false;
   private finished = false;
 
-  constructor(private readonly maxBytes: number) {
+  private readonly maxBytes: number;
+
+  constructor(maxBytes: number) {
     if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_RESPONSE_BYTES) {
       throw new Error("Invalid frame size limit");
     }
+    this.maxBytes = maxBytes;
   }
 
   push(chunk: Buffer): void {

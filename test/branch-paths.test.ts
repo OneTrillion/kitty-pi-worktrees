@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { basename, dirname } from "node:path";
 import test from "node:test";
-import { validateBranchName } from "../src/host/branch.js";
-import { deriveWorktreePath, worktreeDirectoryName, worktreeId } from "../src/host/paths.js";
-import { branchNameError, MAX_BRANCH_BYTES } from "../src/shared/branch.js";
+import { validateBranchName } from "../src/host/branch.ts";
+import { deriveWorktreePath, worktreeDirectoryName, worktreeId } from "../src/host/paths.ts";
+import { branchNameError, MAX_BRANCH_BYTES } from "../src/shared/branch.ts";
 
 const valid = ["main", "feature/payments", "feature/payments/docs", "v1.2", "task_1", "fix+api", "user@task", "a=b", "a,b", "a]b", "café/修正", "a/-b", "a./b"];
 const invalid = ["", "HEAD", "@", "-option", "/tmp/pwn", "../task", "a/../b", "a..b", "a//b", "a/", ".hidden", "a/.hidden", "a.lock", "a.lock/b", "a.", "@{-1}", "a b", "a\nb", "a\0b", "a\u001bb", "a\u007fb", "a\u202eb", "a\u00a0b", "x~1", "x^", "x:y", "x?y", "x*y", "x[y", "x\\y", "x;id", "$(id)", "x`id`", "x|id", "x&y", "x>y", "x<y", "x'y", 'x"y', "x(y)", "x{y}", "x!y", "x#y", "\ud800"];
