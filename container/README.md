@@ -1,6 +1,6 @@
 # Container persistence
 
-Phase 2 integration files. **There is no runnable supervisor yet.** Phase 3a adds lock/socket building blocks, not Docker lifecycle integration. This image can be used for authentication checks, but do not use it as a substitute for managed worktree locking.
+Phase 2 integration files. **There is no runnable supervisor yet.** Phase 3 adds lock/socket building blocks and an inspect-only host CLI, not Docker lifecycle integration. This image can be used for authentication checks, but do not use it as a substitute for managed worktree locking.
 
 ## Extend your existing Pi image
 
@@ -43,14 +43,14 @@ A **new** volume inherits the image directory's UID/GID and private permissions.
 `src/host/docker.ts` builds a fixed Docker argument array; it does not run Docker yet.
 
 - One attached `--rm --init` container, as the non-root host UID/GID.
-- Worktree and common Git directory at their original absolute paths; the main worktree already contains its common `.git` directory, so it needs no redundant mount.
+- Worktree and common Git directory at their original absolute paths. The common directory is ALWAYS a separate bind, even inside the main checkout, to prevent the container from replacing that `.git` directory with a symlink.
 - One shared named agent volume and one read-only bind of the private supervisor socket. Read-only mounting a Unix socket does not prevent connecting to it.
 - No inherited host environment, Docker/Kitty sockets, arbitrary extra options, or host credentials.
 - Stable container name and `--session-dir /pi/agent/sessions/<worktree-id>` derived from the canonical path.
 
 Explicit session directories prevent project settings from relocating sessions outside the volume, and prevent collisions in Pi's default slash-to-dash directory encoding. Pi still records the real cwd in each session. Older sessions created by a previous alias/default directory layout are **not automatically migrated**; resume/import them explicitly after integration if needed.
 
-Mount paths with commas, double quotes, controls, traversal, or overlap with reserved container paths are rejected. Ordinary spaces and Unicode are supported. The future supervisor must additionally resolve/authorize real paths, verify socket type/ownership, handle symlinks, hold locks, and stop containers before releasing them. The argument builder alone is not an authorization boundary.
+Mount paths with commas, double quotes, controls, traversal, or overlap with reserved container paths are rejected. Ordinary spaces and Unicode are supported. Host configuration/discovery now authorize the normal main-checkout/linked-worktree layout (see [`docs/host.md`](../docs/host.md)). The future supervisor must integrate/revalidate those checks with mounts, verify its own socket, hold locks, and stop containers before releasing them. The argument builder alone is not an authorization boundary.
 
 ## Validation
 

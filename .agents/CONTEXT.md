@@ -1,87 +1,79 @@
 # Implementation handoff
 
-## User instructions / review cadence
+## User instructions / checkpoint
 
-- Implement `.agents/plans/IMPLEMENTATION_PLAN.md` step by step; pause at review checkpoints.
-- User moved this handoff and the plan into `.agents/`. **Do not recreate root CONTEXT.md or IMPLEMENTATION_PLAN.md.** AI-only artifacts go in `.agents/`; README, protocol and installation docs are user/contributor docs and stay outside it.
-- Use **Node 24+**. Keep code simple and dependencies few. Avoid adding abstractions/dependencies without a concrete need.
-- Current checkpoint: **Phase 3a complete: private runtime directories, Linux advisory locks, socket server/client. Pause for review.** Phase 2 deployment checks and Phase 3b runnable supervisor remain pending. No user commands yet. No commits made by the assistant this turn.
+- Implement `.agents/plans/IMPLEMENTATION_PLAN.md` step by step, pausing for code review.
+- Node **24+**, simple code, few dependencies. AI-only notes/plans stay in `.agents/`; do not recreate root CONTEXT.md or IMPLEMENTATION_PLAN.md. User/contributor docs remain in README, docs/, container/, kitty/.
+- **Current checkpoint: Phase 3b complete — explicit host config, constrained read-only Git discovery, inspect-only CLI. Pause for review. Next is Phase 3c Docker lifecycle integration.** Plan checkpoints were refined accordingly. No runnable Docker supervisor or Pi commands yet.
+- Still awaiting user's existing Dockerfile/image workflow, launch alias and actual host OS. User has repeatedly said “next step” without providing these. Do not treat the Linux test environment as deployment confirmation. Current host backend explicitly supports Linux only.
+- No commits by assistant this turn. Starting baseline was `d61c63a` (Phase 3a), working tree initially clean. Git commands use `git -c safe.directory=/workspace ...`; no global Git config changes.
 
-Still awaiting the user's **existing Dockerfile/image workflow, Pi launch alias, and host OS**. Do not silently assume Docker Desktop/rootless/SELinux/socket behavior or discard required base-image initialization.
+## Structure and dependencies
 
-## Current code
+- TypeScript ESM/NodeNext -> `dist/`. Source relative imports end in `.ts`; `rewriteRelativeImportExtensions` emits `.js`; `erasableSyntaxOnly` keeps native Node TS execution working. Tests use `node --test`, no tsx/bundler/framework.
+- Runtime dependency: Zod (strict schemas + inferred types). Dev dependencies: TypeScript, Node 24 types, Pi 0.84.4. No new dependencies/lockfile changes in 3a/3b.
+- `src/extension/index.ts` remains a typed NO-OP. No background resources/Pi commands were registered.
+- `src/shared/branch.ts`, `src/host/branch.ts`, `paths.ts`: strict literal request-branch policy, authoritative check-ref-format, bounded directory slug + full branch SHA-256, ID = SHA-256 of canonical worktree path. The older host branch validator now also uses absolute `/usr/bin/git`, neutral cwd/fresh environment, not inherited PATH/GIT_*; tested under poisoned PATH. No persistent task mapping.
 
-- TypeScript ESM/NodeNext, output `dist/`. Node runs `.ts` tests directly (`node --test`); removed `tsx`/esbuild. Source imports use `.ts`; TS `rewriteRelativeImportExtensions` emits `.js`. `erasableSyntaxOnly` prevents syntax Node cannot strip. No extra test runner/bundler.
-- One runtime dependency: Zod for strict schemas/inferred types. Three dev dependencies: TypeScript, Node 24 types, Pi 0.84.4 (types/persistence tests). Keeping Zod is simpler than a new handwritten schema framework. Lockfile regenerated.
-- `src/shared/branch.ts`: literal Git branch policy plus shell/control rejection, 1,024-byte max, Unicode without normalization.
-- `src/host/branch.ts`: authoritative `git check-ref-format refs/heads/<name>` through execFile. Avoids revision/shorthand expansion.
-- `src/host/paths.ts`: safe bounded slug + full branch SHA-256; opaque ID from canonical absolute path SHA-256. Pure derivation, not filesystem authorization.
-- `src/shared/protocol.ts` and `framing.ts`: strict v1 request/response validation, bounded stream decoding. Added FrameSizeError to distinguish oversize output from schema bugs. Details in `docs/protocol.md`.
-- `src/host/runtime.ts`: prepare a host-selected canonical, user-owned mode-0700 runtime root (parent must already exist/canonical); reject insecure/symlink roots without repairing permissions. Unique per-tab directories; socket path <=100 UTF-8 bytes. Idempotent per-tab removal. Root selection stays with trusted supervisor configuration, outside all task mounts.
-- `src/host/lock.ts`: Linux util-linux `/usr/bin/flock` locks fd 3 inherited from Node's open file description. The utility exits immediately, but the parent retains the lock until FileHandle.close/process death. No helper daemon/native addon/new npm dependency. Filename is canonical worktree path hash; realpath aliases share a lock. Open with O_NOFOLLOW/O_NONBLOCK; require owned regular mode-0600 file with one hard link. **Never unlink a lock file on release** (inode races); empty files contain no persistent open/closed state. acquireWorktreeLock returns canonicalPath + idempotent release; isWorktreeOpen is only a snapshot. Missing flock/non-Linux explicitly fails.
-- `src/host/server.ts`: creates its private socket (0600); one validated request per connection at EOF, allowHalfOpen, 5-second absolute input/write deadlines, no count/rate limits. Caller-supplied handler receives Request + AbortSignal. Oversize responses become response-too-large; handler/schema errors are generic internal-error. close aborts/destroys sockets, waits for handlers, then removes the tab directory. It is idempotent; handlers ignoring cancellation can delay it. Caller must monitor the returned failure promise (resolves to Error, never rejects).
-- `src/shared/client.ts`: one connection per request, validated outbound frame, half-close, bounded/strict response + matching op at EOF, total timeout default 30s, AbortSignal support, no automatic retries. Timeout/cancel/disconnect can leave an unknown operation outcome; future UI must not claim cancellation undid Git work.
-- `src/extension/index.ts`: typed **no-op** entry point only.
-- `src/host/docker.ts`: pure fixed Docker argv builder, not a running launcher. Takes trusted host image/named volume + canonical/authorized worktree/Git/socket paths + non-root UID/GID. No arbitrary Docker args or inherited environment. Preserves absolute mount paths; main worktree avoids redundant common Git mount. Named container uses worktree ID, shared agent volume at `/pi/agent`, private socket at `/run/pi-worktree/supervisor.sock` (read-only bind still permits connect), caps dropped, no-new-privileges, attached `--rm --init`.
-- Mount grammar rejects comma/quote/control/traversal/trailing slash and reserved system/image path overlaps. These lexical checks **do not** authorize mutable Git metadata paths or symlinks.
-- `container/Dockerfile`: overlay with REQUIRED `PI_BASE_IMAGE`; no guessed/replacement base image. Build stage Node 24; runtime base must already provide Node 24+, matching Pi 0.84.4, Git/bash/sh. Checks versions. Extension/Zod copied outside volume to root-owned `/opt/pi-worktree`. UID/GID build args (default 1000); `/pi/agent` private and owned accordingly. New volumes inherit ownership; existing volumes do not get recursively chowned. Replaces base ENTRYPOINT/CMD/USER/HOME/WORKDIR, so review with actual base image.
-- `container/start.sh`: checks agent volume writable, creates ephemeral HOME, execs Pi with explicit built-in extension and `--continue`.
-- `.dockerignore`: allowlist of build inputs excludes credentials, Git data and `.agents`.
-- `container/README.md`: overlay/auth setup and manual smoke checklist. README updated for Node 24, moved notes and current partial status.
+## Phase 3b delivered
 
-## Persistence decisions / discovered Pi behavior
+### Configuration / filesystem boundary
 
-1. Set `PI_CODING_AGENT_DIR=/pi/agent` with one shared RW named volume for auth/settings/models/sessions. No custom auth persistence or task registry.
-2. Pi 0.84.4 default session folder encoding maps `/repo/a/b` and `/repo/a-b` identically. Launch args now explicitly set `--session-dir /pi/agent/sessions/<worktree-id>` (hash already used for identity); preserve original cwd too. This also overrides project `sessionDir` settings. No path-to-task registry. Old alias/default sessions are NOT automatically migrated.
-3. Pi 0.84.4 doesn't flush a brand-new session until its first assistant message; do not promise every submitted first message survives abrupt shutdown. Documented this caveat rather than overriding Pi's persistence.
-4. Shared Pi settings/extensions/auth are container-writable. Don't mount this same agent directory into trusted host Pi sessions if isolation from container-modified settings matters.
+- `src/host/config.ts`: `loadHostConfig(absoluteConfigPath)` loads strict JSON with exactly `image`, `agentVolume`, `repositoryPath`, `worktreeRoot`, `runtimeRoot`. Returns a frozen object. No project config search, shell interpolation, filesystem creation, permissions repair, or task registry.
+- File must be regular, no symlink/hard links, owned by current UID or root, not group/world writable, <=64 KiB. Parent path must be canonical. Linux-only currently.
+- Repository/main checkout and task-root directories must already exist, be canonical and non-nested. Main checkout must have an actual `.git` directory (no separate Git dir or bare main repo in this initial policy). Its branch need not be `main`.
+- Linked worktrees must be immediate children of the dedicated task root. Config, canonical installation/package root (including dependencies), canonical Node executable, and runtime root must not overlap either mounted root. Runtime parent must exist; runtime root creation remains with runtime helper.
+- `src/host/files.ts`: bounded regular-file reads using O_NOFOLLOW/O_NONBLOCK and fstat, plus canonical-directory/containment helpers. Pointer reads <=8 KiB. Do not mistake lexical/realpath checks for a general race-proof filesystem sandbox.
+- `docs/host.md` gives config example, setup, inspect command and restrictions. These are user/contributor docs, not AI-only notes.
+
+### Discovery / diagnostic CLI
+
+- `src/host/git-discovery.ts`: `discoverCurrentWorktree(config, cwd, signal?)` uses live `git worktree list --porcelain -z`, not a registry. It resolves cwd aliases, chooses the authorized worktree, checks canonical directories and linked `.git`/`commondir`/`gitdir` backlinks, then reads local branch/detached HEAD and commit.
+- Returns `{ worktreePath, gitDir, commonGitDir, branch: string|null, head }`. Supports main/linked worktrees, cwd subdirectories, detached HEAD, SHA-1/SHA-256, Git-valid existing names broader than request-name policy. Refuses nested repos/submodules, unauthorized/unregistered worktrees, symlinked metadata directories/pointers, inconsistent pointers, unborn/unreadable HEAD. Never repairs or changes the repository.
+- Private Git runner ONLY calls worktree-list, symbolic-ref, check-ref-format and rev-parse. Absolute `/usr/bin/git`, cwd `/`, fresh environment (no inherited PATH/GIT_*), explicit --git-dir/--work-tree/GIT_COMMON_DIR, no automatic system/global config, no pager/optional locks/hooks/fsmonitor, 5-second timeout/SIGKILL, bounded output. Repository config/includes are STILL read.
+- **Critical finding reproduced and fixed:** `rev-parse HEAD^{commit}` can lazily fetch a missing promisor object and execute a configured remote helper. Regression test first demonstrated a harmless marker script executing, then passed after setting `GIT_NO_LAZY_FETCH=1`, `GIT_ALLOW_PROTOCOL=""`, and retaining `GIT_NO_REPLACE_OBJECTS=1`. Never drop these guards.
+- **NOT a general safe Git runner.** Do not add status/checkout/worktree-add/merge/fetch etc. to this helper. They can execute additional repository-controlled programs. Separate execution isolation is still required for later operations; consider constrained helper containers rather than an ever-growing host Git denylist (design not yet implemented/settled).
+- `src/host/cli.ts` currently supports only `inspect --config /absolute/host.json` and --help. Outputs ASCII-escaped JSON (including Unicode/bidi/control handling) and JSON errors on stderr, exit 1. Does not lock/reserve, start Docker, run checks or mutate Git. Build then run `node /trusted/install/dist/host/cli.js inspect --config ...` from target worktree. Installed code must be outside target mounts; this project cannot safely supervise its own mounted source checkout without a separate trusted copy.
+
+### Mount correction (important)
+
+`src/host/docker.ts` now ALWAYS mounts common Git separately, including inside the main checkout. Previous “skip redundant mount” optimization was unsafe: that container could otherwise replace `.git` with a symlink redirecting a later host bind. A separate Linux bind mount point prevents replacing that directory from inside the container. The task-root parent must likewise never be mounted into task containers. Actual Docker behavior/revalidation races remain unverified here; do not claim this completes lifecycle security.
+
+## Previously delivered runtime / protocol
+
+- `runtime.ts`: host-selected canonical UID-owned root mode 0700, private per-tab directories, socket path <=100 UTF-8 bytes, idempotent per-tab removal. Reject insecure/symlink roots rather than repairing them.
+- `lock.ts`: util-linux `/usr/bin/flock` locks inherited fd 3; utility exits while Node retains the same open file description. Parent close/process death releases OS lock. No daemon/native addon/PID registry. Canonical path aliases share lock. Require owned regular mode-0600 file, one hard link; O_NOFOLLOW/O_NONBLOCK. **Never unlink lock files on release**. Empty files contain no persisted open/closed state. `isWorktreeOpen` is a snapshot only.
+- All supervisors must share the SAME runtime root on a local filesystem. Keep lock handles reachable and avoid accidental child inheritance. Abrupt death can leave a socket directory, but not a held OS lock; do not auto-delete other tabs' directories.
+- Strict protocol v1: create-or-open(branch), list, open(ID), inspect(ID); no path/source-branch/command/image/Docker-options/Kitty-target request fields. IDs aren't authorization tokens; rediscover against host-authorized Git entries on every request.
+- Frame: uint32 BE byte length + UTF-8 JSON; request <=16 KiB, response <=1 MiB. One request/response per connection. Client half-closes; server allowHalfOpen, validates at EOF before dispatch. Reject malformed/trailing/multiple frames. No count/rate limits; oversize lists return response-too-large, not truncation.
+- `server.ts`: private 0600 socket; absolute input/write deadlines 5s (not handler timeout). Trusted handler gets Request + AbortSignal. `close()` aborts/destroys connections, waits for handlers, then removes tab directory. Monitor `failure` (resolves Error, doesn't reject). Handler exceptions/schema bugs become generic internal-error without leaking exception text.
+- `client.ts`: validates request and full response/matching op at EOF; total deadline 30s, AbortSignal, no retries. Timeout/cancel/disconnect can mean unknown operation outcome, not rollback/cancellation proof.
+- `done` isn't persistent Git/protocol state. Unavailable inspection cannot claim clean. Runtime open and Git locked differ. Response strings remain untrusted display data.
+
+## Container / Pi persistence (Phase 2, deployment checks pending)
+
+- `container/Dockerfile` overlays REQUIRED `PI_BASE_IMAGE`, not a guessed replacement. Build stage Node 24; runtime base must provide Node 24+, matching Pi 0.84.4, Git/bash/sh. No second Pi install or pi install. Copies compiled extension/shared modules + Zod to root-owned `/opt/pi-worktree`, outside volume.
+- Fixed `PI_CODING_AGENT_DIR=/pi/agent` RW named volume for auth/settings/models/sessions. UID/GID args default 1000; private agent dir owned accordingly. New volumes inherit ownership; existing ones aren't auto-recursively-chowned. Overrides base entrypoint/CMD/user/HOME/workdir: review required base initialization with user.
+- `container/start.sh` checks volume writable, creates ephemeral HOME, execs Pi with explicit extension and --continue. `.dockerignore` allowlists build inputs, excludes credentials/.agents/Git data.
+- Docker argv builder remains PURE: attached --rm --init, non-root host UID/GID, fixed image/named volume/options, caps dropped/no-new-privileges, stable absolute worktree/common-Git paths, private socket read-only bind. No host environment/control sockets/credential directories forwarded.
+- Explicit `--session-dir /pi/agent/sessions/<worktree-id>` avoids Pi 0.84.4 slash-to-dash cwd encoding collisions (`/a/b` vs `/a-b`) and overrides project sessionDir relocation. Old alias/default sessions are not migrated automatically.
+- Pi 0.84.4 only flushes a brand-new session after its first assistant message. Don't promise all submitted first messages survive abrupt shutdown. Shared agent config/extensions/auth are container-writable; don't share with trusted host Pi if host execution isolation matters.
 
 ## Verification
 
-Latest `npm run check`: **104 tests passed**, typecheck and build passed on Node 24.20.0/Linux (Git 2.39.5, util-linux flock 2.38.1). New runtime/socket subset: 20 tests passed in 3 repeated runs and separately as non-root user `node`. A real request/response round trip using compiled `dist/` modules also passed. `git diff --check` passed. No dependencies/lockfile changes this phase; Phase 2's clean install/audit reported 0 vulnerabilities. Tests include:
-- 74 original branch/path/protocol/framing cases (still pass with native Node TS).
-- Fixed Docker argv, mount constraints, same-worktree identity/session stability and encoding collisions.
-- Actual shell entrypoint with a fake Pi executable; no UI/provider calls.
-- Fresh Pi processes with TEMPORARY agent dirs and synthetic credentials: four concurrent locked auth updates survive restart; auth file mode 0600.
-- Synthetic saved Pi sessions resume independently across fresh processes, including colliding default path encodings.
-- Private runtime/socket permissions, symlink/insecure roots, byte-length limits, idempotent cleanup.
-- Real OS locks: same-process contention, aliases, independent worktrees, simultaneous acquisition, hard/symbolic link rejection, retained inode across release, SIGKILL release in a child fixture.
-- Real Unix-socket server/client: all request shapes, EOF-only dispatch, malformed/truncated/oversize messages, strict output validation/op matching, deadlines, cancellation, concurrency, shutdown waiting for active handlers.
+- Latest full check: **125 tests passed**, typecheck/build passed on Node 24.20.0, Linux, Git 2.39.5, flock 2.38.1.
+- New config/discovery/CLI subset: **21 tests passed as non-root `node`** as well. Includes actual temporary Git repos/worktrees, detached/SHA-256, dirty/untracked preservation, hostile pointers/config/environment and the reproduced lazy-fetch remote-helper attack. CLI tests check argument rejection and terminal-safe JSON. Compiled CLI --help and an actual compiled inspect run against a temporary Git repository both passed. `git diff --check` passed.
+- Earlier tests cover strict protocol/framing, Docker args, entrypoint with fake Pi, actual Pi persistence across fresh processes with synthetic credentials, concurrent auth locking, Unix-socket deadlines/shutdown, real flock contention/aliases/inodes/SIGKILL. Runtime/socket subset previously repeated 3x and passed non-root; compiled transport round trip passed.
+- AuthStorage isn't public in pinned Pi: only tests resolve internal core/auth-storage.js to exercise its real file-locking backend. Production doesn't depend on this internal API. SessionManager is public.
+- Forced socket shutdown with unread data may give ECONNRESET instead of EOF; intentional-shutdown tests accept either, with rejection handlers attached immediately.
+- **Docker and Kitty absent.** No image build, real /login/OAuth, volume population/ownership, actual socket bind, mount-point protection or tab/container smoke verification. No user project checks run; normal Git mutation exists only in temporary test fixtures.
 
-One test initially assumed orderly EOF on forced socket shutdown. Unix sockets can instead return ECONNRESET when unread data is discarded; intentional-shutdown tests now accept either, without leaving rejected promises unhandled. This is expected transport behavior, not a reason to retry an operation.
+## Next: Phase 3c
 
-AuthStorage isn't publicly exported by Pi 0.84.4. The test alone resolves the pinned package's internal `core/auth-storage.js` relative to its public module URL to exercise the real locking backend. Production code does not depend on this internal API. SessionManager is public.
+1. Implement attached Docker execution and signals/cleanup around config -> discovery -> runtime/lock/socket. Revalidate authorized mount boundaries at launch; monitor server.failure; keep lock until container shutdown AND all host request handlers finish.
+2. Solve orphan-container handling explicitly. Supervisor SIGKILL releases its fd but does NOT prove Docker stopped. Deterministic Docker names reject duplicates but aren't complete stop/cleanup logic. Do not kill an unrelated existing container by name or advertise full crash recovery prematurely.
+3. Confirm user's base image/alias/host OS and perform available deployment smoke checks. No Docker here; use controlled process/CLI fakes where useful and label those as non-container tests.
+4. Creation/status/integration commands still need isolation from writable Git hooks/config/filters/promisor helpers and mutable metadata paths. No automatic commits/merges/repairs/deletions/project checks.
+5. Update this handoff and pause for review.
 
-Docker and Kitty executables are **absent** here. Image build, actual `/login`/OAuth refresh, volume ownership/population, live socket bind mounting and tab/container behavior are **not verified**. Current tests are local process/Unix-socket checks, not container smoke tests. No user project tests/commands were run.
-
-Commands: `npm ci`, `npm run check`. Git inspection still uses `git -c safe.directory=/workspace ...`; no global safe.directory changes. The user's Phase 2 changes have a committed baseline (`6a832fb` at this turn's start).
-
-## Protocol contract to preserve
-
-- Only create-or-open (literal branch), list, open (ID), inspect (ID). No path/source-branch/command/image/options/Kitty target request fields.
-- IDs are not authorization tokens. Rediscover and match against host-authorized worktrees in this repository per request; no persisted ID registry.
-- 4-byte BE byte count + UTF-8 JSON, max request 16 KiB / response 1 MiB. One request/response per connection.
-- Client half-closes after request; server uses `allowHalfOpen: true`, validates at EOF **before dispatch**, responds and closes. Reject trailing/multiple frames. Socket layer now implements incomplete-frame deadlines/cleanup and matches response ops; no request-count/rate limits.
-- Oversize list returns response-too-large, never silent truncation. `inspection: unavailable` cannot claim clean. Runtime open and Git locked are distinct. No persisted done state. Treat response strings as untrusted display data.
-
-## Security prerequisites for Phase 3/4 (not solved by Phase 2)
-
-Writable shared Git metadata lets containers alter hooks, config/includes, filters/fsmonitor/external programs, templates, worktree pointers and symlinks. Argument arrays/strict JSON are NOT sufficient:
-- Design/test hardened host Git execution before running worktree/status operations against this metadata.
-- Enforce host mount/path authorization independently of mutable `.git` pointers and discovered paths. A hash doesn't make a path safe. Verify the socket is the supervisor's own socket, not a substituted control socket.
-- Trusted supervisor/config/tab-bar artifacts must not be installed directly in a checkout writable by containers.
-- OS-released advisory worktree locks are now implemented/tested on Linux. **Docker lifetime integration remains unsolved:** a supervisor SIGKILL releasing its lock does NOT prove a Docker container stopped. Deterministic Docker name helps reject duplicates but does not replace cleanup/reconciliation. Do not advertise full supervisor crash recovery yet.
-- All supervisors must use the SAME host runtime root on a local filesystem; different roots mean different lock inodes. Lock handles must stay reachable and must not be inherited unintentionally by child processes. Abrupt process death can leave a private tab socket directory, but no stale held OS lock; do not auto-delete other tabs' directories.
-- Handle cross-tab Git/launch races non-destructively. Future inspect-before-merge checks are snapshots and must not claim immunity to arbitrary concurrent edits.
-
-Discuss any required plan adjustment rather than weakening these boundaries silently.
-
-## Docs reviewed / next step
-
-Previously read complete installed `docs/extensions.md` and `examples/extensions/hello.ts`. This turn read complete `containerization.md`, `environment-variables.md`, `sessions.md`, `settings.md`, `session-format.md`, `providers.md`, plus relevant installed auth/session implementation. Installed docs root: `/usr/local/lib/node_modules/@earendil-works/pi-coding-agent/`.
-
-Pi lifecycle reminders: registerCommand bypasses LLM; use `ctx.ui.setTitle`; idle uses agent_settled, not agent_end; start resources at session_start/command and close idempotently at session_shutdown, never create background resources in the factory.
-
-Phase 3 was split into 3a/3b for review (recorded in the plan). No Pi API changes or new Pi-doc reading were needed for 3a.
-
-After this review: **Phase 3b**, obtain base image/alias and confirm host OS (do not equate this Linux test environment with the user's host). Implement trusted config, hardened Git root discovery/path authorization, attached Docker execution and signals/orphan cleanup. Reuse the existing argv builder, runtime root, lock, server and client. Keep the lock held until container shutdown AND request handlers have finished. Monitor server.failure. Never call host Git against task-controlled config/hooks before hardening it. Available Phase 2 container checks still need Docker on the deployment host. Read complete relevant Pi docs/examples and their relevant cross-references before additional Pi API work. Update this handoff and pause for the next code-review checkpoint.
+Pi docs previously fully read: extensions, containerization, environment-variables, sessions, settings, session-format, providers; hello example; relevant auth/session implementation. Installed docs: `/usr/local/lib/node_modules/@earendil-works/pi-coding-agent/`. No Pi API work/docs reading needed for 3b. For later Pi work read full relevant docs/examples and follow related references. Lifecycle reminders: registerCommand bypasses LLM, setTitle via UI, idle uses agent_settled not agent_end, background resources only from session_start/commands with idempotent session_shutdown cleanup.

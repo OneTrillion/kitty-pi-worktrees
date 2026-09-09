@@ -34,9 +34,11 @@ test("attached container gets only the four prescribed mounts and the host UID/G
   assert.ok(args.includes("--security-opt=no-new-privileges"));
 });
 
-test("main worktree does not need a redundant common Git mount", () => {
-  const args = dockerRunArgs(config, { ...worktree, commonGitDir: `${worktree.worktreePath}/.git` });
-  assert.equal(values(args, "--mount").length, 3);
+test("main worktree gets a separate common Git bind so the directory cannot be replaced from the container", () => {
+  const commonGitDir = `${worktree.worktreePath}/.git`;
+  const args = dockerRunArgs(config, { ...worktree, commonGitDir });
+  assert.equal(values(args, "--mount").length, 4);
+  assert.ok(values(args, "--mount").includes(`type=bind,src=${commonGitDir},dst=${commonGitDir}`));
 });
 
 test("reopening keeps identity, cwd, volume and session directory; other worktrees are distinct", () => {

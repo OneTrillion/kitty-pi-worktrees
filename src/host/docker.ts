@@ -30,7 +30,7 @@ function validatePath(value: string): void {
   }
 }
 
-function validateDirectoryMount(value: string): void {
+export function validateDirectoryMount(value: string): void {
   validatePath(value);
   const reserved = ["/opt", "/pi", "/run", "/var/run", "/bin", "/sbin", "/lib", "/lib64", "/usr", "/etc", "/proc", "/sys", "/dev", "/tmp/pi-home"];
   if (value === "/" || reserved.some((dir) => contains(value, dir) || contains(dir, value))) {
@@ -78,10 +78,10 @@ export function dockerRunArgs(config: DockerConfig, worktree: DockerWorktree): s
     "--env", "TERM=xterm-256color",
     "--mount", `type=bind,src=${worktree.worktreePath},dst=${worktree.worktreePath}`,
   ];
-  // In the main worktree the common .git directory is already mounted.
-  if (!contains(worktree.worktreePath, worktree.commonGitDir)) {
-    args.push("--mount", `type=bind,src=${worktree.commonGitDir},dst=${worktree.commonGitDir}`);
-  }
+  // Always bind the common Git directory, even inside the main worktree.
+  // As a mount point it cannot be renamed/replaced by that container. Skipping
+  // this "redundant" mount would let it redirect later host binds via a symlink.
+  args.push("--mount", `type=bind,src=${worktree.commonGitDir},dst=${worktree.commonGitDir}`);
   args.push(
     "--mount", `type=volume,src=${config.agentVolume},dst=${AGENT_DIR}`,
     "--mount", `type=bind,src=${worktree.socketPath},dst=${SUPERVISOR_SOCKET},readonly`,

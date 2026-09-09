@@ -9,8 +9,14 @@ export async function validateBranchName(name: string): Promise<void> {
   assertBranchName(name);
   // check-ref-format needs no repository and runs no project hooks or filters.
   // The fully qualified ref prevents expansion of @{-1} or revision expressions.
-  await execFileAsync("git", ["check-ref-format", `refs/heads/${name}`], {
+  await execFileAsync("/usr/bin/git", ["check-ref-format", `refs/heads/${name}`], {
+    cwd: "/",
+    env: {
+      PATH: "/usr/bin:/bin", HOME: "/nonexistent", LANG: "C",
+      GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_SYSTEM: "/dev/null", GIT_CONFIG_GLOBAL: "/dev/null",
+    },
     timeout: 5000,
+    killSignal: "SIGKILL",
     maxBuffer: 8192,
   });
 }

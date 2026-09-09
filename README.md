@@ -2,7 +2,7 @@
 
 One interactive Pi session, Docker container, host supervisor, and Kitty tab per Git worktree. Git is the persistent source of truth; there is no task registry.
 
-**Status: Phase 3a runtime locks and socket transport added.** Image-persistence code is present, but there is no runnable supervisor or user commands yet; Docker/login checks are pending. AI planning and handoff notes live under [`.agents/`](.agents/).
+**Status: Phase 3b host configuration and read-only discovery added.** An inspect-only host command is available. Docker startup/cleanup and Pi commands are still pending, along with Docker/login smoke checks. AI planning and handoff notes live under [`.agents/`](.agents/).
 
 ## Development
 
@@ -19,13 +19,24 @@ Compiled modules appear under `dist/`, preserving the source layout. Node runs t
 ## Layout
 
 - `src/shared/` — protocol schemas, framing, socket client, request branch policy
-- `src/host/` — branch/path validation, Docker arguments, runtime directories, advisory locks, socket server
+- `src/host/` — host config/inspection CLI, Git discovery, Docker arguments, runtime locks/socket server
 - `src/extension/` — typed Pi extension entry point
 - `test/` — this project's tests, including checks against real Git
+- `docs/host.md` — trusted configuration, inspect command, discovery restrictions
 - `docs/protocol.md` — wire format and trust-boundary contract
 - `container/` — image integration, entrypoint, and persistence setup
 - `kitty/` — host-only tab-bar integration (planned)
 - `.agents/` — AI-only handoff notes and implementation plan
+
+## Inspect a worktree
+
+Create an explicit host configuration as described in [`docs/host.md`](docs/host.md), then run from the target worktree:
+
+```sh
+node /path/to/trusted/pi-worktree/dist/host/cli.js inspect --config /absolute/path/to/host.json
+```
+
+This prints the current worktree, Git directories, branch and commit as JSON. It does not start Docker or modify the repository. Configuration and installed host code must be outside all task mounts.
 
 ## Host runtime building blocks
 
@@ -59,6 +70,6 @@ Closing tabs will preserve worktrees, branches, changes, and saved Pi sessions. 
 
 The intended container mounts are its own worktree, common Git metadata, the shared Pi agent volume, and its private supervisor socket. Docker and Kitty sockets stay on the host. Requests cannot specify host commands, filesystem paths, image/options/mounts, or Kitty targets. See [the protocol contract](docs/protocol.md).
 
-Every task container can read shared provider credentials and alter shared Git metadata. Requests for valid new worktrees/containers have no confirmation or rate limit, so resource exhaustion is an accepted risk. Repository-controlled hooks, config, filters, symlinks, and worktree metadata need separate host-side hardening; strict JSON validation alone is **not** a sandbox. That host-side hardening has not been implemented yet.
+Every task container can read shared provider credentials and alter shared Git metadata. Requests for valid new worktrees/containers have no confirmation or rate limit, so resource exhaustion is an accepted risk. Repository-controlled hooks, config, filters, symlinks, and worktree metadata need separate host-side hardening; strict JSON validation alone is **not** a sandbox. Discovery now has explicit path authorization and constrained read-only Git calls, including disabled lazy fetching/remote helpers. This is **not** a safe general-purpose Git runner; creation/status/integration still require execution isolation.
 
 These commands will never run user project tests, lint, builds, CI, or services. Development checks in this repository test this software only.
