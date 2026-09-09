@@ -1,6 +1,6 @@
 # Container persistence
 
-Phase 2 integration files. **There is no runnable supervisor yet.** Phase 3 adds lock/socket building blocks and an inspect-only host CLI, not Docker lifecycle integration. This image can be used for authentication checks, but do not use it as a substitute for managed worktree locking.
+Image integration for the Phase 3 host supervisor. Use the [host `start` command](../docs/host.md#start-pi-in-the-current-tab) for worktree sessions; the direct Docker example below is for authentication only. Real image/login/terminal smoke checks remain pending.
 
 ## Extend your existing Pi image
 
@@ -40,9 +40,9 @@ A **new** volume inherits the image directory's UID/GID and private permissions.
 
 ## Launcher contract
 
-`src/host/docker.ts` builds a fixed Docker argument array; it does not run Docker yet.
+`src/host/docker.ts` builds fixed arguments; `docker-client.ts` and `supervisor.ts` execute and supervise them.
 
-- One attached `--rm --init` container, as the non-root host UID/GID.
+- One non-root container with `--init`, created stopped with `--pull=never --restart=no`, then started attached by verified ID. Supervised containers do not use `--rm`: the supervisor stops/removes them explicitly after checking identity, without deleting named volumes.
 - Worktree and common Git directory at their original absolute paths. The common directory is ALWAYS a separate bind, even inside the main checkout, to prevent the container from replacing that `.git` directory with a symlink.
 - One shared named agent volume and one read-only bind of the private supervisor socket. Read-only mounting a Unix socket does not prevent connecting to it.
 - No inherited host environment, Docker/Kitty sockets, arbitrary extra options, or host credentials.
@@ -50,11 +50,11 @@ A **new** volume inherits the image directory's UID/GID and private permissions.
 
 Explicit session directories prevent project settings from relocating sessions outside the volume, and prevent collisions in Pi's default slash-to-dash directory encoding. Pi still records the real cwd in each session. Older sessions created by a previous alias/default directory layout are **not automatically migrated**; resume/import them explicitly after integration if needed.
 
-Mount paths with commas, double quotes, controls, traversal, or overlap with reserved container paths are rejected. Ordinary spaces and Unicode are supported. Host configuration/discovery now authorize the normal main-checkout/linked-worktree layout (see [`docs/host.md`](../docs/host.md)). The future supervisor must integrate/revalidate those checks with mounts, verify its own socket, hold locks, and stop containers before releasing them. The argument builder alone is not an authorization boundary.
+Mount paths with commas, double quotes, controls, traversal, or overlap with reserved container paths are rejected. Ordinary spaces and Unicode are supported. Host configuration/discovery now authorize the normal main-checkout/linked-worktree layout (see [`docs/host.md`](../docs/host.md)). The supervisor revalidates Git paths, mount directory identities and its own socket before create/attach; it holds the lock until container removal and request-handler completion. The argument builder alone is not an authorization boundary.
 
 ## Validation
 
-`npm run check` covers launch arguments, the real entrypoint with a fake Pi executable, and Pi persistence in fresh local processes using temporary directories and synthetic credentials. Concurrent auth updates and separate/resumable sessions are tested without network/model calls. These are **not** Docker or real OAuth checks.
+`npm run check` covers launch arguments, the real entrypoint with a fake Pi executable, and Pi persistence in fresh local processes using temporary directories and synthetic credentials. Lifecycle tests use a fake Docker CLI with persistent test-only daemon state, plus real Unix sockets, OS locks and process signals. They cover normal/failing startup, shutdown, ambiguous API responses, ownership collisions, SIGKILL recovery and preserving worktree files. These are **not** real Docker, TTY or OAuth checks.
 
 On the deployment host, still verify:
 
@@ -64,4 +64,4 @@ On the deployment host, still verify:
 4. The supervisor socket works; Docker/Kitty sockets and their environment variables are absent.
 5. Closing a tab/container leaves files and sessions intact.
 
-Items 2–5 need the upcoming supervisor. Submitted messages are subject to Pi's normal persistence behavior; in Pi 0.84.4 a brand-new session is not flushed until its first assistant message. Neither this integration nor tab closing adds an extra save guarantee.
+Use the host `start` command for items 2–5. Also verify SIGTERM/HUP cleanup, terminal restoration, and explicit `recover` after an intentionally interrupted supervisor. Submitted messages are subject to Pi's normal persistence behavior; in Pi 0.84.4 a brand-new session is not flushed until its first assistant message. Neither this integration nor tab closing adds an extra save guarantee.

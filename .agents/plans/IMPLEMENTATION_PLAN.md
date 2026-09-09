@@ -439,10 +439,11 @@ All operations should fail safely and leave existing worktrees intact.
 - Branch already checked out: report the existing worktree.
 - Host socket unavailable: explain that Pi was not launched through the supervisor.
 - Kitty launch failure: preserve the newly created worktree and report how to open it from the host.
-- Docker launch failure: preserve the worktree and release the runtime lock.
+- Docker launch failure: preserve the worktree; clean up any verified container before releasing the runtime lock. Creation and attached start are separate so an ambiguous create can leave only a stopped container.
+- Docker cleanup uncertainty: retain the lock and retry until removal is confirmed. Supervised containers do not use Docker auto-remove; predictable names and ownership labels permit explicit recovery without a task registry.
 - Sync conflict: preserve Git’s conflict state in the task worktree.
 - Merge cannot fast-forward: leave the target branch unchanged.
-- Abrupt supervisor death: rely on OS lock release and rediscover state from Git next time.
+- Abrupt supervisor death: rely on OS lock release and rediscover Git state next time, but do not assume the container stopped. A new start refuses an occupied container name. Explicit host-only `recover` must acquire the lock and verify ownership before stopping/removing a leftover by full container ID; it never changes worktrees, branches or named agent volumes.
 - Corrupt or stale Git worktree metadata: expose Git’s prunable/repair information; do not force repair automatically.
 
 ## 15. Implementation phases

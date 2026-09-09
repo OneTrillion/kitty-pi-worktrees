@@ -22,8 +22,8 @@ test("inspect-only CLI emits current worktree data as terminal-safe JSON", async
   assert.match(result.head, /^[a-f0-9]{40}$/);
 });
 
-test("CLI requires an explicit config and refuses unimplemented/unknown commands", async () => {
-  for (const args of [[], ["inspect"], ["start"], ["exec", "id"], ["inspect", "--command", "id"]]) {
+test("CLI requires an explicit config and refuses unknown commands", async () => {
+  for (const args of [[], ["inspect"], ["start"], ["recover"], ["exec", "id"], ["inspect", "--command", "id"]]) {
     await assert.rejects(exec(process.execPath, [cli, ...args], { timeout: 10000 }), (error: unknown) => {
       const failure = error as { code: number; stderr: string; stdout: string };
       assert.equal(failure.code, 1);
@@ -34,4 +34,11 @@ test("CLI requires an explicit config and refuses unimplemented/unknown commands
   }
   const { stdout } = await exec(process.execPath, [cli, "--help"]);
   assert.match(stdout, /does not start Docker/);
+});
+
+test("start refuses a noninteractive terminal before contacting Docker", async (t) => {
+  const { config, configPath } = await setupGit(t);
+  await assert.rejects(exec(process.execPath, [cli, "start", "--config", configPath], {
+    cwd: config.repositoryPath, timeout: 10000,
+  }), /requires an interactive terminal/);
 });

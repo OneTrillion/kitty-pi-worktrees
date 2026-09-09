@@ -3,6 +3,15 @@ import { worktreeId } from "./paths.ts";
 
 export const AGENT_DIR = "/pi/agent";
 export const SUPERVISOR_SOCKET = "/run/pi-worktree/supervisor.sock";
+export const MANAGED_LABEL = "io.pi-worktree.managed";
+export const WORKTREE_LABEL = "io.pi-worktree.worktree";
+export const REPOSITORY_LABEL = "io.pi-worktree.repository";
+export const RUN_LABEL = "io.pi-worktree.run";
+export const RUN_ID_PATTERN = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/;
+
+export function containerName(canonicalPath: string): string {
+  return `pi-worktree-${worktreeId(canonicalPath)}`;
+}
 
 /** Trusted host configuration only; never deserialize this from a socket request. */
 export interface DockerConfig {
@@ -68,7 +77,7 @@ export function dockerRunArgs(config: DockerConfig, worktree: DockerWorktree): s
 
   const args = [
     "run", "--rm", "--interactive", "--tty", "--init",
-    "--name", `pi-worktree-${worktreeId(worktree.worktreePath)}`,
+    "--name", containerName(worktree.worktreePath),
     "--user", `${worktree.uid}:${worktree.gid}`,
     "--cap-drop=ALL", "--security-opt=no-new-privileges",
     "--workdir", worktree.worktreePath,
@@ -88,5 +97,18 @@ export function dockerRunArgs(config: DockerConfig, worktree: DockerWorktree): s
     config.image,
     "--session-dir", sessionDirectory(worktree.worktreePath),
   );
+  return args;
+}
+
+/** Create stopped first. The supervisor removes it only after verified shutdown. */
+export function dockerCreateArgs(config: DockerConfig, worktree: DockerWorktree, runId: string): string[] {
+  if (!RUN_ID_PATTERN.test(runId)) throw new Error("Invalid host-generated run ID");
+  const args = dockerRunArgs(config, worktree);
+  // Replace only the fixed `run --rm` prefix, not values elsewhere in the argv.
+  args.splice(0, 2, "create", "--pull=never", "--restart=no",
+    "--label", `${MANAGED_LABEL}=1`,
+    "--label", `${WORKTREE_LABEL}=${worktreeId(worktree.worktreePath)}`,
+    "--label", `${REPOSITORY_LABEL}=${worktreeId(worktree.commonGitDir)}`,
+    "--label", `${RUN_LABEL}=${runId}`);
   return args;
 }

@@ -3,7 +3,6 @@ import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { TestContext } from "node:test";
 import { promisify } from "node:util";
 import { loadHostConfig } from "../../src/host/config.ts";
 
@@ -18,7 +17,7 @@ export async function git(cwd: string, args: string[]): Promise<string> {
   return stdout.trimEnd();
 }
 
-export async function setupGit(t: TestContext, format: "sha1" | "sha256" = "sha1") {
+export async function setupGit(t: { after(fn: () => Promise<void>): void }, format: "sha1" | "sha256" = "sha1") {
   const base = await mkdtemp(join(tmpdir(), "pw-git-"));
   t.after(() => rm(base, { recursive: true, force: true }));
   const repositoryPath = join(base, "repo");

@@ -2,7 +2,7 @@
 
 One interactive Pi session, Docker container, host supervisor, and Kitty tab per Git worktree. Git is the persistent source of truth; there is no task registry.
 
-**Status: Phase 3b host configuration and read-only discovery added.** An inspect-only host command is available. Docker startup/cleanup and Pi commands are still pending, along with Docker/login smoke checks. AI planning and handoff notes live under [`.agents/`](.agents/).
+**Status: Phase 3c supervisor code added.** Host `inspect`, `start`, and `recover` commands are available. Pi worktree commands and Kitty tab launching are still pending. Lifecycle tests use a fake Docker CLI/daemon; real Docker/login/terminal smoke checks remain pending. AI planning and handoff notes live under [`.agents/`](.agents/).
 
 ## Development
 
@@ -19,24 +19,27 @@ Compiled modules appear under `dist/`, preserving the source layout. Node runs t
 ## Layout
 
 - `src/shared/` — protocol schemas, framing, socket client, request branch policy
-- `src/host/` — host config/inspection CLI, Git discovery, Docker arguments, runtime locks/socket server
+- `src/host/` — host CLI/supervisor, Git discovery, Docker client/arguments, runtime locks/socket server
 - `src/extension/` — typed Pi extension entry point
 - `test/` — this project's tests, including checks against real Git
-- `docs/host.md` — trusted configuration, inspect command, discovery restrictions
+- `docs/host.md` — trusted configuration, start/inspect/recover commands, lifecycle and discovery restrictions
 - `docs/protocol.md` — wire format and trust-boundary contract
 - `container/` — image integration, entrypoint, and persistence setup
 - `kitty/` — host-only tab-bar integration (planned)
 - `.agents/` — AI-only handoff notes and implementation plan
 
-## Inspect a worktree
+## Start or inspect a worktree
 
 Create an explicit host configuration as described in [`docs/host.md`](docs/host.md), then run from the target worktree:
 
 ```sh
 node /path/to/trusted/pi-worktree/dist/host/cli.js inspect --config /absolute/path/to/host.json
+node /path/to/trusted/pi-worktree/dist/host/cli.js start --config /absolute/path/to/host.json
 ```
 
-This prints the current worktree, Git directories, branch and commit as JSON. It does not start Docker or modify the repository. Configuration and installed host code must be outside all task mounts.
+`inspect` prints Git metadata without starting Docker. `start` needs an interactive terminal, a non-root host account, a local Docker daemon and an already-built image. It holds the worktree lock while running an attached Pi container. Configuration and installed host code must be outside all task mounts.
+
+If an uncatchable supervisor crash leaves a container behind, another `start` refuses it. Run the host-only `recover` command with the same config after checking the old tab is gone; it acquires the lock and verifies ownership before stopping/removing that exact container. See [recovery details](docs/host.md#recover-a-leftover-container).
 
 ## Host runtime building blocks
 
@@ -44,11 +47,11 @@ All supervisors must share one host-selected private runtime root outside task m
 
 Linux `flock` locks a descriptor retained by the Node process. Duplicate opens (including symlink aliases) fail; closing the descriptor or killing its holder releases the OS lock. **Do not unlink lock files to unlock a worktree.** The files contain no persisted open/closed state. Other host platforms need a separate tested backend; no npm locking dependency was added.
 
-The socket server validates a full request before invoking its handler. Closing it aborts connections, waits for handlers, then removes only its per-tab directory. The future supervisor must stop Docker before releasing its lock and handle orphan containers—these lifecycle guarantees are not implemented by the lock helper alone. See [protocol details](docs/protocol.md).
+The socket server validates a full request before invoking its handler. Closing it aborts connections, waits for handlers, then removes only its per-tab directory. The supervisor confirms its container is removed before releasing the lock. If Docker cleanup is uncertain, it keeps the lock and retries. SIGKILL cannot be caught: deterministic container names block duplicate starts and explicit host recovery handles leftovers. See [protocol details](docs/protocol.md).
 
 ## Installation and authentication
 
-See [`container/README.md`](container/README.md) to extend an existing Node 24+/Pi image and set up the shared agent volume. The extension is built into the image, not installed with `pi install`. Final alias/host integration awaits your existing Dockerfile/alias and host OS.
+See [`container/README.md`](container/README.md) to extend an existing Node 24+/Pi image and set up the shared agent volume. The extension is built into the image, not installed with `pi install`. A host alias example is in [`docs/host.md`](docs/host.md). Final deployment verification still needs your existing image/alias and actual host OS.
 
 `PI_CODING_AGENT_DIR=/pi/agent` is backed by one shared read/write Docker volume. Run `/login` once; subsequent containers reuse authentication. Worktrees keep their host absolute paths, with explicit per-worktree session directories to avoid collisions. Never bake credentials into the image.
 

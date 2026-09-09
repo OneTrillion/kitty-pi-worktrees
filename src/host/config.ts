@@ -14,6 +14,7 @@ const HostConfigSchema = z.strictObject({
   repositoryPath: absolutePath,
   worktreeRoot: absolutePath,
   runtimeRoot: absolutePath,
+  dockerSocket: absolutePath.default("/var/run/docker.sock"),
 });
 export type HostConfig = Readonly<z.infer<typeof HostConfigSchema>>;
 
@@ -42,7 +43,7 @@ export async function loadHostConfig(configPath: string): Promise<HostConfig> {
   // Both src/host and dist/host resolve here to the installation/package root.
   // Includes runtime dependencies, not just the launcher entry point.
   const installationRoot = await realpath(fileURLToPath(new URL("../../", import.meta.url)));
-  for (const protectedPath of [configPath, installationRoot, await realpath(process.execPath), config.runtimeRoot]) {
+  for (const protectedPath of [configPath, installationRoot, await realpath(process.execPath), config.runtimeRoot, config.dockerSocket]) {
     for (const mountedRoot of [config.repositoryPath, config.worktreeRoot]) {
       if (pathsOverlap(mountedRoot, protectedPath)) {
         throw new Error("Host config, installed code, and runtime must stay outside task mounts");

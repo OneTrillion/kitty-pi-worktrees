@@ -100,7 +100,7 @@ export async function startRequestServer(runtimeRoot: string, handler: Handler, 
       }
       await stopped;
       // A handler must honor its signal; do not release locks while host work is still running.
-      await Promise.all(pending);
+      await Promise.allSettled(pending);
       await runtime.remove();
     })();
   }

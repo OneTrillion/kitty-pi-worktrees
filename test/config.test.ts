@@ -14,6 +14,15 @@ test("load explicit host configuration without creating a runtime or task regist
   assert.deepEqual(await readdir(base), before);
 });
 
+test("Docker endpoint defaults to a local socket and cannot be a remote URL or task-mounted path", async (t) => {
+  const { configPath, config } = await setupGit(t);
+  assert.equal(config.dockerSocket, "/var/run/docker.sock");
+  for (const dockerSocket of ["tcp://host:2375", "ssh://host", join(config.repositoryPath, "docker.sock")]) {
+    await writeFile(configPath, JSON.stringify({ ...config, dockerSocket }));
+    await assert.rejects(loadHostConfig(configPath));
+  }
+});
+
 test("host configuration rejects unknown fields, wrong types, unsafe paths and mount/options syntax", async (t) => {
   const { configPath, config } = await setupGit(t);
   const invalid: unknown[] = [null, [], { ...config, command: "id" }, { ...config, image: "--privileged" },

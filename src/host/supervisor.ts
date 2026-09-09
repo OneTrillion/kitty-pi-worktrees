@@ -1,0 +1,199 @@
+import { randomUUID } from "node:crypto";
+import { lstat, realpath } from "node:fs/promises";
+import { setTimeout as delay } from "node:timers/promises";
+import type { HostConfig } from "./config.ts";
+import { containerName, dockerCreateArgs, MANAGED_LABEL, REPOSITORY_LABEL, RUN_ID_PATTERN, RUN_LABEL, WORKTREE_LABEL } from "./docker.ts";
+import { createDockerClient, type AttachedContainer, type ContainerInfo, type DockerClient } from "./docker-client.ts";
+import { assertCanonicalDirectory } from "./files.ts";
+import { discoverCurrentWorktree, type DiscoveredWorktree } from "./git-discovery.ts";
+import { acquireWorktreeLock } from "./lock.ts";
+import { worktreeId } from "./paths.ts";
+import { createRuntimeDirectory, prepareRuntimeRoot } from "./runtime.ts";
+import { startRequestServer } from "./server.ts";
+
+interface SupervisorOptions {
+  signal?: AbortSignal;
+  onNotice?: (message: string) => void;
+  // Trusted test seams, deliberately not CLI/config/request options.
+  dockerFactory?: typeof createDockerClient;
+  containerUser?: { uid: number; gid: number };
+  cleanupRetryMs?: number;
+}
+
+function owned(info: ContainerInfo, location: DiscoveredWorktree, runId?: string): boolean {
+  const labels = info.Config.Labels;
+  return labels?.[MANAGED_LABEL] === "1" &&
+    labels[WORKTREE_LABEL] === worktreeId(location.worktreePath) &&
+    labels[REPOSITORY_LABEL] === worktreeId(location.commonGitDir) &&
+    RUN_ID_PATTERN.test(labels[RUN_LABEL] ?? "") &&
+    (runId === undefined || labels[RUN_LABEL] === runId);
+}
+
+async function pinDirectories(paths: string[]) {
+  return Promise.all([...new Set(paths)].map(async (path) => {
+    await assertCanonicalDirectory(path);
+    const info = await lstat(path, { bigint: true });
+    return { path, dev: info.dev, ino: info.ino };
+  }));
+}
+
+async function waitForExit(attachment: AttachedContainer, signal: AbortSignal): Promise<number> {
+  return new Promise<number>((resolve, reject) => {
+    const abort = (): void => resolve(130);
+    signal.addEventListener("abort", abort, { once: true });
+    // Attach both handlers immediately, even if cancellation already happened.
+    void attachment.completion.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+    if (signal.aborted) abort();
+  });
+}
+
+/** Stop/remove only a verified full ID. API uncertainty retains the OS lock and retries. */
+async function cleanupContainer(
+  docker: DockerClient, location: DiscoveredWorktree, runId: string, id: string | undefined,
+  retryMs: number, notice: (message: string) => void,
+): Promise<void> {
+  let warned = false;
+  for (;;) {
+    try {
+      const info = await docker.lookup(id ?? containerName(location.worktreePath));
+      if (!info) return;
+      if (!owned(info, location, runId)) {
+        if (!id) return; // Failed create raced with somebody else's container: never touch it.
+        throw new Error("Container ownership changed unexpectedly");
+      }
+      id = info.Id;
+      if (info.State.Running || info.State.Restarting || info.State.Paused) await docker.stop(id);
+      await docker.remove(id); // No --force or --volumes. Removal also defeats a delayed start request.
+      if (await docker.lookup(id)) throw new Error("Container removal has not been confirmed");
+      return;
+    } catch {
+      if (!warned) {
+        notice("Docker cleanup is unconfirmed; retaining the worktree lock and retrying. Restore Docker access; SIGKILL will require host recovery.");
+        warned = true;
+      }
+      await delay(retryMs);
+    }
+  }
+}
+
+/** One call per host process/tab. No Git mutation or worktree-opening handlers yet. */
+export async function runHostSession(
+  config: HostConfig, cwd: string, mode: "start" | "recover", options: SupervisorOptions = {},
+): Promise<number> {
+  const retryMs = options.cleanupRetryMs ?? 2000;
+  if (!Number.isSafeInteger(retryMs) || retryMs < 1) throw new Error("Invalid cleanup retry interval");
+  const shutdown = new AbortController();
+  let shutdownCode: number | undefined;
+  let fatal: Error | undefined;
+  const notice = (message: string): void => {
+    try { (options.onNotice ?? console.error)(message); } catch { /* Reporting must not interrupt cleanup. */ }
+  };
+  const signals = { SIGHUP: 129, SIGINT: 130, SIGTERM: 143 } as const;
+  const listeners = Object.entries(signals).map(([signal, code]) => {
+    const listener = (): void => { shutdownCode ??= code; shutdown.abort(); };
+    process.on(signal, listener);
+    return { signal, listener };
+  });
+  const cancel = (): void => { shutdownCode ??= 130; shutdown.abort(); };
+  options.signal?.addEventListener("abort", cancel, { once: true });
+  if (options.signal?.aborted) cancel();
+
+  let lock: Awaited<ReturnType<typeof acquireWorktreeLock>> | undefined;
+  let server: Awaited<ReturnType<typeof startRequestServer>> | undefined;
+  let control: Awaited<ReturnType<typeof createRuntimeDirectory>> | undefined;
+  let docker: DockerClient | undefined;
+  let location: DiscoveredWorktree | undefined;
+  let attachment: AttachedContainer | undefined;
+  let cleanupNeeded = false;
+  let containerId: string | undefined;
+  let runId: string = randomUUID();
+  let exitCode = 0;
+  let failure: unknown;
+  try {
+    const user = options.containerUser ?? { uid: process.getuid!(), gid: process.getgid!() };
+    if (mode === "start" && (user.uid < 1 || user.gid < 1)) throw new Error("Start Pi from a non-root host account");
+    location = await discoverCurrentWorktree(config, cwd, shutdown.signal);
+    const pins = await pinDirectories([config.repositoryPath, config.worktreeRoot, location.worktreePath, location.commonGitDir, location.gitDir]);
+    await prepareRuntimeRoot(config.runtimeRoot);
+    lock = await acquireWorktreeLock(config.runtimeRoot, location.worktreePath);
+    if (lock.canonicalPath !== location.worktreePath) throw new Error("Worktree changed during lock acquisition");
+    control = await createRuntimeDirectory(config.runtimeRoot);
+    docker = await (options.dockerFactory ?? createDockerClient)(config, control.directory);
+    shutdown.signal.throwIfAborted();
+
+    const existing = await docker.lookup(containerName(location.worktreePath));
+    if (mode === "recover") {
+      if (existing) {
+        if (!owned(existing, location)) throw new Error("Container name is occupied by an unrecognized container; refusing recovery");
+        containerId = existing.Id;
+        runId = existing.Config.Labels![RUN_LABEL]!;
+        cleanupNeeded = true; // The explicit host recover command authorizes stop/removal of this ID.
+        notice(`Recovering managed container ${containerId}`);
+      } else notice("No leftover container for this worktree");
+    } else {
+      if (existing) throw new Error(`Container ${existing.Id} already occupies this worktree name. Inspect it on the host; use recover for a verified managed leftover.`);
+      server = await startRequestServer(config.runtimeRoot, () => ({
+        version: 1, ok: false, error: { code: "unavailable", message: "Worktree commands are not implemented in this build yet" },
+      }));
+      void server.failure.then((error) => { fatal = error; shutdown.abort(); });
+      const socketPin = await lstat(server.socketPath, { bigint: true });
+      const socketPath = server.socketPath;
+      const revalidate = async (): Promise<void> => {
+        const current = await discoverCurrentWorktree(config, location!.worktreePath, shutdown.signal);
+        if (current.worktreePath !== location!.worktreePath || current.gitDir !== location!.gitDir || current.commonGitDir !== location!.commonGitDir) {
+          throw new Error("Git worktree paths changed during startup");
+        }
+        for (const pin of pins) {
+          await assertCanonicalDirectory(pin.path);
+          const info = await lstat(pin.path, { bigint: true });
+          if (info.dev !== pin.dev || info.ino !== pin.ino) throw new Error("A mount directory changed during startup");
+        }
+        const socket = await lstat(socketPath, { bigint: true });
+        if (!socket.isSocket() || socket.uid !== BigInt(process.getuid!()) || (socket.mode & 0o777n) !== 0o600n ||
+            socket.dev !== socketPin.dev || socket.ino !== socketPin.ino || await realpath(socketPath) !== socketPath) {
+          throw new Error("Supervisor socket changed during startup");
+        }
+        shutdown.signal.throwIfAborted();
+      };
+      await revalidate();
+      const args = dockerCreateArgs(config, { ...location, socketPath, ...user }, runId);
+      cleanupNeeded = true; // A failed/timed-out create can leave a STOPPED container.
+      const createdId = await docker.create(args);
+      const created = await docker.lookup(createdId);
+      if (!created || !owned(created, location, runId) || created.Name !== `/${containerName(location.worktreePath)}`) {
+        throw new Error("Created container identity could not be verified");
+      }
+      containerId = created.Id;
+      await revalidate();
+      attachment = docker.attach(containerId);
+      exitCode = await waitForExit(attachment, shutdown.signal);
+    }
+  } catch (error) {
+    if (!shutdown.signal.aborted) failure = error;
+  } finally {
+    // Stop accepting requests now. Docker control uses a separate private directory,
+    // so removing the request socket cannot invalidate in-flight cleanup commands.
+    const serverClosed = server?.close();
+    // Install a rejection handler immediately; still await it before releasing the lock.
+    void serverClosed?.catch(() => {});
+    try {
+      if (cleanupNeeded && docker && location) await cleanupContainer(docker, location, runId, containerId, retryMs, notice);
+      await attachment?.disconnect();
+    } finally {
+      try { await serverClosed; }
+      finally {
+        try { await control?.remove(); }
+        finally {
+          try { await lock?.release(); }
+          finally {
+            for (const { signal, listener } of listeners) process.off(signal, listener);
+            options.signal?.removeEventListener("abort", cancel);
+          }
+        }
+      }
+    }
+  }
+  if (fatal) throw fatal;
+  if (failure) throw failure;
+  return shutdownCode ?? exitCode;
+}

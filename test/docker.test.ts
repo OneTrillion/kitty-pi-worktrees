@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { AGENT_DIR, SUPERVISOR_SOCKET, dockerRunArgs, sessionDirectory, type DockerWorktree } from "../src/host/docker.ts";
+import { AGENT_DIR, SUPERVISOR_SOCKET, dockerCreateArgs, dockerRunArgs, sessionDirectory, type DockerWorktree } from "../src/host/docker.ts";
+import { worktreeId } from "../src/host/paths.ts";
 
 const config = { image: "pi-worktree:test", agentVolume: "pi-agent" };
 const worktree: DockerWorktree = {
@@ -32,6 +33,21 @@ test("attached container gets only the four prescribed mounts and the host UID/G
   assert.deepEqual(args.slice(-3), [config.image, "--session-dir", sessionDirectory(worktree.worktreePath)]);
   assert.ok(args.includes("--cap-drop=ALL"));
   assert.ok(args.includes("--security-opt=no-new-privileges"));
+});
+
+test("supervised create has fixed ownership labels, never pulls or auto-removes, and preserves mounts", () => {
+  const runId = "12345678-1234-1234-1234-123456789abc";
+  const args = dockerCreateArgs(config, worktree, runId);
+  assert.equal(args[0], "create");
+  assert.ok(args.includes("--pull=never"));
+  assert.ok(args.includes("--restart=no"));
+  assert.ok(!args.includes("--rm"));
+  assert.deepEqual(values(args, "--label"), [
+    "io.pi-worktree.managed=1", `io.pi-worktree.worktree=${worktreeId(worktree.worktreePath)}`,
+    `io.pi-worktree.repository=${worktreeId(worktree.commonGitDir)}`, `io.pi-worktree.run=${runId}`,
+  ]);
+  assert.deepEqual(values(args, "--mount"), values(dockerRunArgs(config, worktree), "--mount"));
+  assert.throws(() => dockerCreateArgs(config, worktree, "-".repeat(36)));
 });
 
 test("main worktree gets a separate common Git bind so the directory cannot be replaced from the container", () => {
