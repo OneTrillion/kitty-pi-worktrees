@@ -2,11 +2,11 @@
 
 One interactive Pi session, Docker container, host supervisor, and Kitty tab per Git worktree. Git is the persistent source of truth; there is no task registry.
 
-**Status: scaffolding and Phase 2 container-persistence code.** The supervisor and user commands are not implemented yet; Docker/login checks are pending. AI planning and handoff notes live under [`.agents/`](.agents/).
+**Status: Phase 3a runtime locks and socket transport added.** Image-persistence code is present, but there is no runnable supervisor or user commands yet; Docker/login checks are pending. AI planning and handoff notes live under [`.agents/`](.agents/).
 
 ## Development
 
-Requires Node.js **24+**, npm, Git, and a POSIX shell. Docker and Kitty are not needed for the current automated tests.
+Requires Node.js **24+**, npm, Git, and a POSIX shell. The current advisory-lock backend requires **Linux with util-linux `/usr/bin/flock`**. Docker and Kitty are not needed for automated tests.
 
 ```sh
 npm ci
@@ -18,14 +18,22 @@ Compiled modules appear under `dist/`, preserving the source layout. Node runs t
 
 ## Layout
 
-- `src/shared/` — protocol schemas, framing, request branch policy
-- `src/host/` — branch/path validation and fixed Docker launch arguments
+- `src/shared/` — protocol schemas, framing, socket client, request branch policy
+- `src/host/` — branch/path validation, Docker arguments, runtime directories, advisory locks, socket server
 - `src/extension/` — typed Pi extension entry point
 - `test/` — this project's tests, including checks against real Git
 - `docs/protocol.md` — wire format and trust-boundary contract
 - `container/` — image integration, entrypoint, and persistence setup
 - `kitty/` — host-only tab-bar integration (planned)
 - `.agents/` — AI-only handoff notes and implementation plan
+
+## Host runtime building blocks
+
+All supervisors must share one host-selected private runtime root outside task mounts. It contains empty per-worktree lock files and private per-tab socket directories; no task registry is stored there. Runtime directories use mode 0700, sockets/lock files mode 0600. Insecure or symlinked runtime roots are rejected, not repaired automatically.
+
+Linux `flock` locks a descriptor retained by the Node process. Duplicate opens (including symlink aliases) fail; closing the descriptor or killing its holder releases the OS lock. **Do not unlink lock files to unlock a worktree.** The files contain no persisted open/closed state. Other host platforms need a separate tested backend; no npm locking dependency was added.
+
+The socket server validates a full request before invoking its handler. Closing it aborts connections, waits for handlers, then removes only its per-tab directory. The future supervisor must stop Docker before releasing its lock and handle orphan containers—these lifecycle guarantees are not implemented by the lock helper alone. See [protocol details](docs/protocol.md).
 
 ## Installation and authentication
 

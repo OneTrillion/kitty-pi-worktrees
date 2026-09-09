@@ -1,6 +1,6 @@
 # Container persistence
 
-Phase 2 integration files. **The supervisor is not implemented yet.** This image can be used for authentication checks, but do not use it as a substitute for the worktree locks planned in Phase 3.
+Phase 2 integration files. **There is no runnable supervisor yet.** Phase 3a adds lock/socket building blocks, not Docker lifecycle integration. This image can be used for authentication checks, but do not use it as a substitute for managed worktree locking.
 
 ## Extend your existing Pi image
 

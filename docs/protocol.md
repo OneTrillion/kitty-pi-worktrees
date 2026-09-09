@@ -9,8 +9,18 @@ Host and extension must be released from the same source revision. Runtime schem
 - Request body: 1–16,384 bytes. Response body: 1–1,048,576 bytes.
 - The client sends a frame and half-closes its writable side. The server must use `allowHalfOpen: true`, validate at read EOF, then respond and close its writable side. Client validation likewise finishes at EOF.
 - `FrameDecoder` handles arbitrary chunk boundaries. It rejects oversize/zero lengths before allocating a body, trailing bytes, multiple frames, incomplete EOF, malformed UTF-8, BOM, and invalid JSON. Schema parsing rejects unknown keys at every object level, wrong types, unknown operations, and unsupported versions; it does not coerce values.
-- The future socket layer must enforce incomplete-message timeouts, clean up disconnected clients, and never dispatch before complete validation. These timeouts are not request-count or creation-rate limits.
+- `src/host/server.ts` enforces an absolute 5-second incomplete-frame deadline (partial input does not reset it) and a 5-second response-write deadline. It never dispatches before complete validation. Handler execution is separate from these transfer deadlines. These are not request-count or creation-rate limits.
 - Oversize lists must return a `response-too-large` error, not a silently truncated list. No fixed task-count limit is imposed by schemas; pagination can be considered in a future version.
+
+## Runtime API and shutdown
+
+`startRequestServer(runtimeRoot, handler)` creates a private socket directory and returns `{ socketPath, close, failure }`. The caller supplies a host-selected 0700 root and trusted handler; no Git/Docker/Kitty operations are built into the transport. Socket paths are limited to 100 UTF-8 bytes. The caller must monitor `failure` (a promise resolving to an Error on an unexpected server failure).
+
+The handler receives `(validatedRequest, abortSignal)`. It must honor cancellation and wait for its child operations to finish before returning. `close()` is idempotent: it stops accepting clients, aborts/destroys connections, waits for active handlers, then removes the per-tab directory. A handler ignoring cancellation can delay shutdown; releasing a worktree lock while it is still running would be unsafe.
+
+`requestSupervisor(socketPath, request, { timeoutMs?, signal? })` validates outbound requests, half-closes after sending, and validates the full response and matching operation at EOF. Its default total deadline is 30 seconds. Cancellation/timeout/disconnection does **not** prove the host operation was cancelled; an outcome may be unknown. There are no automatic retries. The UI should tell users to inspect worktrees before retrying a creation request.
+
+Malformed input gets a bounded error response where possible; timeouts/disconnections may simply close the socket. Handler exceptions and invalid returned objects become generic `internal-error` responses without leaking exception text. Oversize valid output becomes `response-too-large`.
 
 ## Requests
 
@@ -56,4 +66,4 @@ Response paths, branch names, reasons, and errors are untrusted display data. UI
 
 ## Host hardening still required
 
-Schema validation protects request fields, not mounted Git metadata. Before serving real operations, address repository-controlled hooks, filters, fsmonitor, external diff/pagers, config includes, templates, symlinks, and forged worktree paths. Host configuration/executable selection must not come from project files. IDs must be matched only to worktrees authorized by host path policy. Runtime locks must use OS-released advisory locking, not just PID files or stale directory locks.
+Schema validation protects request fields, not mounted Git metadata. Before serving real operations, address repository-controlled hooks, filters, fsmonitor, external diff/pagers, config includes, templates, symlinks, and forged worktree paths. Host configuration/executable selection must not come from project files. IDs must be matched only to worktrees authorized by host path policy. The Linux OS-released advisory lock helper is implemented, but integration with container shutdown and orphan recovery is still required. A correct lock helper alone cannot guarantee that a Docker container stops when the supervisor dies.

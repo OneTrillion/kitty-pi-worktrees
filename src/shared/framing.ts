@@ -4,10 +4,17 @@ import {
   type Request, type Response,
 } from "./protocol.ts";
 
+export class FrameSizeError extends Error {
+  constructor() {
+    super("Frame exceeds size limit");
+    this.name = "FrameSizeError";
+  }
+}
+
 /** A connection carries exactly one frame: uint32 BE length, then UTF-8 JSON. */
 function encode(value: unknown, maxBytes: number): Buffer {
   const body = Buffer.from(JSON.stringify(value), "utf8");
-  if (body.length === 0 || body.length > maxBytes) throw new Error("Frame exceeds size limit");
+  if (body.length === 0 || body.length > maxBytes) throw new FrameSizeError();
   const frame = Buffer.allocUnsafe(4 + body.length);
   frame.writeUInt32BE(body.length);
   body.copy(frame, 4);

@@ -465,6 +465,8 @@ All operations should fail safely and leave existing worktrees intact.
 
 ### Phase 3 — Host supervisor
 
+Review checkpoints: **3a** private runtime directories, advisory locks and socket server/client; **3b** trusted configuration, hardened Git discovery/path authorization and Docker lifecycle integration. The Linux lock backend uses the existing util-linux `flock` utility, not an npm/native dependency. Confirm the deployment host OS before selecting other backends.
+
 - Resolve worktree/common-Git paths.
 - Implement per-worktree runtime locking.
 - Implement private socket lifecycle.
