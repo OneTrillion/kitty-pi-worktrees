@@ -1,5 +1,24 @@
 # Pi Worktree Extension — Implementation Plan
 
+## Implementation status (latest resume)
+
+Source implementation for Phases 1–8 is complete, including hardening, recovery tests, opt-in Docker smoke coverage and user documentation. **Deployment acceptance is not yet complete.** The user's existing image/alias and actual host setup have not been supplied, and this environment has no Docker, Kitty or Python executables.
+
+| Phase | Implementation / automated evidence | Remaining deployment verification |
+| --- | --- | --- |
+| 1 | TypeScript build, strict protocol, branch/path validation | None specific |
+| 2 | Image overlay/reference base, stable session dirs, synthetic Pi auth/session persistence tests | Real image build, `/login`/OAuth refresh, concurrent auth and actual resume |
+| 3 | Linux supervisor, private sockets/locks, stopped create + verified start/cleanup/recovery | Real Docker UID/mount/PTY/tab-close behavior |
+| 4 | Isolated worktree creation, local parents, live reuse, fixed Kitty new-tab launch | Real helper bind semantics and Kitty handoff |
+| 5 | Live list/selector, host list/open, task/helper orphan recovery | End-user abrupt tab shutdown and resume |
+| 6 | Pi lifecycle titles and trusted literal Kitty renderer | Python renderer tests and actual Kitty socket-only/rendering checks |
+| 7 | Git-only done, merge sync, ff-only integration; real-Git conflict and target-invariant tests | Exercise interactive user workflow |
+| 8 | Mount-identity hardening, helper failure/cancellation/ownership tests, CLI selectors, compiled smoke, complete setup/recovery/security docs | Run `docs/validation.md` on the deployment host |
+
+Latest checks: default suite **196 tests: 195 passed, 1 Python skip** as both root and non-root. Typecheck/build and **1 additional compiled CLI/worker/extension smoke test passed** in writable temporary copies (also as non-root). `/workspace/dist` is a harness-provided read-only mount, so an in-place `npm run check` passed source tests but could not write build output; no mount/permissions workaround was applied to the checkout. `npm run smoke:docker` correctly skips without an explicit image; real Docker smoke assertions are implemented but unexecuted here.
+
+See `.agents/CONTEXT.md` for implementation/revalidation details and `docs/validation.md` for remaining acceptance checks. No assistant commits were made.
+
 ## 1. Objective
 
 Build a small system for running multiple independent, interactive Pi sessions against Git worktrees, with one Docker container and one Kitty tab per worktree.

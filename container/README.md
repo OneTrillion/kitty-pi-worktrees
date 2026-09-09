@@ -1,6 +1,6 @@
 # Container persistence
 
-Image integration for the Phase 3 host supervisor. Use the [host `start` command](../docs/host.md#start-pi-in-the-current-tab) for worktree sessions; the direct Docker example below is for authentication only. Real image/login/terminal smoke checks remain pending.
+Image integration for the host supervisor, Pi extension and isolated Git worker. Use the [host `start` command](../docs/host.md#start-pi-in-the-current-tab) for worktree sessions; the direct Docker example below is for authentication only. Real image/login/terminal checks remain pending; see [validation](../docs/validation.md).
 
 ## Extend your existing Pi image
 
@@ -18,7 +18,22 @@ docker volume create pi-agent
 
 Use a non-root host account. `PI_UID`/`PI_GID` default to 1000. The image replaces the base image's entrypoint, command, default user, HOME and working directory; share any required base-image initialization before relying on this integration.
 
-The compiled extension and its single runtime dependency (Zod) live under `/opt/pi-worktree`, outside the shared volume. The fixed entrypoint explicitly loads the extension and passes `--continue` to Pi. No credentials, agent logs, Git metadata, or `.agents` files enter the build context.
+The compiled extension, shared Git backend/worker and single runtime dependency (Zod) live under `/opt/pi-worktree`, outside the shared volume. The fixed entrypoint explicitly loads the extension and passes `--continue` to Pi. No credentials, agent logs, Git metadata, or `.agents` files enter the build context.
+
+## Optional reference base
+
+If you do not have an existing Pi image, build the supplied minimal base first:
+
+```sh
+docker build -f container/Base.Dockerfile -t pi-worktree-base:local .
+docker build -f container/Dockerfile \
+  --build-arg PI_BASE_IMAGE=pi-worktree-base:local \
+  --build-arg PI_UID="$(id -u)" --build-arg PI_GID="$(id -g)" \
+  -t pi-worktree:local .
+docker volume create pi-agent
+```
+
+This reference supplies Node 24, Pi 0.84.4, Git, bash, CA certificates and ripgrep. It is not assumed to match your old image/alias or project toolchain. Add trusted build-time project tools to your own base if needed; the supervisor has no request-controlled image or service provisioning options. Do not bake provider credentials, Docker/Kitty control addresses or auth files into either image.
 
 ## Login once
 
@@ -52,9 +67,25 @@ Explicit session directories prevent project settings from relocating sessions o
 
 Mount paths with commas, double quotes, controls, traversal, or overlap with reserved container paths are rejected. Ordinary spaces and Unicode are supported. Host configuration/discovery now authorize the normal main-checkout/linked-worktree layout (see [`docs/host.md`](../docs/host.md)). The supervisor revalidates Git paths, mount directory identities and its own socket before create/attach; it holds the lock until container removal and request-handler completion. The argument builder alone is not an authorization boundary.
 
+## Isolated Git helpers
+
+The same fixed image also runs `/opt/pi-worktree/dist/git/worker-cli.js` with Node as an explicit entrypoint, bypassing Pi. The worker only inspects Git or creates a worktree. Helpers use non-root UID/GID, read-only rootfs, no network, dropped capabilities and private writable `/tmp`. Inspection mounts the worktree/common Git read-only. Creation mounts the preallocated destination and common Git read/write; no parent task directory or source worktree files are mounted.
+
+Helpers receive **no agent volume, credentials or host-control sockets**. The host holds a repository mutex until the verified helper has stopped and been removed, including on cancellation. An orphan blocks new helpers/startup until host `recover-git` verifies ownership and removes it. See [host recovery](../docs/host.md#recovery).
+
 ## Validation
 
 `npm run check` covers launch arguments, the real entrypoint with a fake Pi executable, and Pi persistence in fresh local processes using temporary directories and synthetic credentials. Lifecycle tests use a fake Docker CLI with persistent test-only daemon state, plus real Unix sockets, OS locks and process signals. They cover normal/failing startup, shutdown, ambiguous API responses, ownership collisions, SIGKILL recovery and preserving worktree files. These are **not** real Docker, TTY or OAuth checks.
+
+An opt-in real-Docker test uses fresh temporary repos, a UUID-named test volume and synthetic markers only (never your `pi-agent` volume):
+
+```sh
+PW_DOCKER_SMOKE_IMAGE=pi-worktree:local npm run smoke:docker
+# Optional for a different local daemon:
+# PW_DOCKER_SMOKE_SOCKET=/run/user/1000/docker.sock
+```
+
+Run as the non-root deployment user with an image built for that UID/GID. It checks stable paths, persistence across `--rm` containers, distinct session directory markers, ownership, private socket reachability, absence of control sockets/environment, common `.git` mount-point protection, compiled extension registration and helper creation into a preallocated bind. It does **not** log in, call a model, run the Pi TUI or prove OAuth/session resume in Kitty. The default test suite does not run it. See the complete [deployment checklist](../docs/validation.md).
 
 On the deployment host, still verify:
 

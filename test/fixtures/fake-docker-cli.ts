@@ -82,7 +82,8 @@ if (args[0] === "create") {
   found.attachedPid = process.pid;
   save(containers);
   if (found.Config.Labels?.["io.pi-worktree.role"] === "git") {
-    const reply = await helperMain(found.createArgs.at(-1)!);
+    if (typeof controls.helperDelayMs === "number") await delay(controls.helperDelayMs);
+    const reply = controls.badHelperReply ? "not JSON" : await helperMain(found.createArgs.at(-1)!);
     const current = state();
     const item = current.find((entry) => entry.Id === found.Id);
     if (item) { item.State.Running = false; save(current); }

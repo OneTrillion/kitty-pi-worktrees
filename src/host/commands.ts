@@ -4,7 +4,7 @@ import { listGitWorktrees } from "./git-discovery.ts";
 import { recoverGitHelper } from "./git-helper.ts";
 import { worktreeId } from "./paths.ts";
 import { createRuntimeDirectory, prepareRuntimeRoot } from "./runtime.ts";
-import { createWorktreeService } from "./worktrees.ts";
+import { createWorktreeService, type WorktreeServiceOptions } from "./worktrees.ts";
 import type { Response } from "../shared/protocol.ts";
 
 export async function resolveSelection(config: HostConfig, selector: string): Promise<string> {
@@ -16,7 +16,9 @@ export async function resolveSelection(config: HostConfig, selector: string): Pr
 }
 
 export async function runHostCommand(config: HostConfig, configPath: string,
-  command: "list" | "open" | "recover-git", selector?: string): Promise<Response | null> {
+  command: "list" | "open" | "recover-git", selector?: string,
+  // Trusted test adapters, never CLI/config/protocol fields.
+  options: { dockerFactory?: typeof createDockerClient; service?: WorktreeServiceOptions } = {}): Promise<Response | null> {
   const controller = new AbortController();
   const abort = (): void => controller.abort();
   const signals = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
@@ -25,10 +27,10 @@ export async function runHostCommand(config: HostConfig, configPath: string,
   try {
     await prepareRuntimeRoot(config.runtimeRoot);
     control = await createRuntimeDirectory(config.runtimeRoot);
-    const docker = await createDockerClient(config, control.directory);
+    const docker = await (options.dockerFactory ?? createDockerClient)(config, control.directory);
     controller.signal.throwIfAborted();
     if (command === "recover-git") { await recoverGitHelper(config, docker); return null; }
-    const service = createWorktreeService(config, config.repositoryPath, docker, { configPath });
+    const service = createWorktreeService(config, config.repositoryPath, docker, { ...options.service, configPath });
     return await service.handle(command === "list" ? { version: 1, op: "list" }
       : { version: 1, op: "open", worktreeId: await resolveSelection(config, selector ?? "") }, controller.signal);
   } finally {

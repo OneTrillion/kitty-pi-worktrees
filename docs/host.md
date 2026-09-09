@@ -1,12 +1,27 @@
 # Host launcher
 
-The host currently supports **Linux**, Node 24+, `/usr/bin/git` (tested with Git 2.39.5), util-linux `/usr/bin/flock`, and `/usr/bin/docker` connected to a local Unix socket. `inspect`, `start`, and `recover` are implemented. Automatic Kitty tab opening and Pi worktree commands are still pending.
+The host supports Linux, Node 24+, `/usr/bin/git` (tested with 2.39.5), util-linux `/usr/bin/flock`, `/usr/bin/docker` with a local Unix endpoint, and `/usr/bin/kitty`. Real deployment checks remain required; see [validation](validation.md).
 
-**Deployment checks are pending:** lifecycle tests use a controlled fake Docker CLI/daemon, not real Docker or a Kitty terminal.
+## Install a trusted release
+
+Build from a reviewed source revision, then install a **separate copy outside the repository and task root**. Do not run host code, Node, dependencies or Kitty scripts from a checkout containers can modify. For example, from this source checkout:
+
+```sh
+npm ci --ignore-scripts
+npm run check
+release="$HOME/.local/lib/pi-worktree/$(git rev-parse --short HEAD)"
+mkdir -p "$(dirname "$release")"
+mkdir "$release"                    # fail rather than overwrite an existing release
+cp -R dist "$release/"
+cp package.json package-lock.json "$release/"
+(cd "$release" && npm ci --omit=dev --ignore-scripts)
+```
+
+Build the [matching image](../container/README.md) from that same revision. Do not update files in a running release or change image tags underneath active supervisors. Close managed sessions first; keep old releases until their processes have exited. Existing Docker aliases may contain extra initialization or mounts: review those explicitly rather than forwarding arbitrary old Docker arguments.
 
 ## Explicit trusted configuration
 
-Create a JSON file outside every directory that task containers can modify, for example `~/.config/pi-worktree/shop.json`:
+Create a mode-0600 JSON file outside all task mounts, for example `/home/alice/.config/pi-worktree/shop.json`:
 
 ```json
 {
@@ -21,84 +36,102 @@ Create a JSON file outside every directory that task containers can modify, for 
 
 Requirements:
 
-- `repositoryPath` is the original/main checkout, with an actual `.git` directory. Its checked-out branch need not be named `main`.
-- `worktreeRoot` is a dedicated existing directory for task worktrees. It must be separate from the original checkout, not inside or above it. Authorized linked worktrees are immediate children of this root; their paths/branches still come from Git, not a task registry.
-- Repository/task directories and the runtime parent must already exist at canonical absolute paths (no symlink aliases). The runtime root itself is created later by the supervisor's runtime helper, not by configuration loading.
-- Every supervisor for this user must use the same private runtime root to share advisory locks. Use a local filesystem and a short path suitable for Unix sockets.
-- `dockerSocket` is optional, defaulting to `/var/run/docker.sock`. Only an absolute local socket path is accepted, never a TCP/SSH URL. Its canonical target must be outside task mounts and owned by this user or root. Use the same Docker daemon for every session/recovery of a worktree; do not switch endpoints while containers may remain.
-- The image must already exist locally: supervised creation uses `--pull=never`. Docker's inherited context/environment and normal `~/.docker` config/credential helpers are not used. Each session gets an empty, private Docker CLI config directory. Rootless/user-namespace UID mapping still requires deployment validation.
-- The config file must be owned by the launching user or root and not group/world writable. It must be a regular file, not a symbolic/hard link, and at most 64 KiB. Mode 0600 is recommended.
-- The config, installed application (including dependencies), Node/Docker executables, runtime root, and Docker socket must remain outside all task mounts. Install/copy trusted host code separately when working on this project itself; do not symlink it back into the checkout being mounted.
+- `repositoryPath` is the original/main checkout, with an actual `.git` directory. Its branch need not be named `main`.
+- `worktreeRoot` is an existing, dedicated, separate directory, not inside or above the original checkout. Authorized linked worktrees are **immediate children**; Git still supplies their paths and branches. Create this empty root explicitly before loading config.
+- Repository/task directories and the runtime parent must exist at canonical absolute paths, without symlink aliases. The launcher creates the runtime root if absent. Use a short, local-filesystem runtime path suitable for Unix sockets.
+- All supervisors for the same worktrees must use **one runtime root and Docker daemon**. Do not change either while sessions or leftovers can survive. Do not move active worktrees.
+- `dockerSocket` defaults to `/var/run/docker.sock`. It must resolve to a local Unix socket outside task mounts, owned by this user or root. TCP/SSH endpoints and inherited Docker contexts are not accepted.
+- Optional `kittySocket` is the absolute filesystem socket path (without `unix:`). Otherwise the launcher uses host `KITTY_LISTEN_ON` when it is a filesystem `unix:` address. Kitty may append its PID; use the **actual** address, and update explicit config after a Kitty restart. See [Kitty setup](../kitty/README.md).
+- The image must already exist locally (`--pull=never`). The Docker client uses an empty private config and a fresh environment, not `~/.docker` credential helpers or environment-selected executables.
+- The config is a user/root-owned regular file, not group/world writable, not a symlink/hard link, and at most 64 KiB. Keep its directory and all installed host resources trusted as well.
+- Config, installed code/dependencies, Node/Docker/Kitty executables, runtime and control sockets must remain outside every task mount. Mount paths with commas, quotes, controls, traversal or reserved container-path overlaps are rejected; ordinary spaces and Unicode are supported.
 
-The loader does not search project files, interpolate shell/environment expressions, execute commands, repair permissions, or create a registry. Unknown keys and arbitrary command/Docker/mount options are rejected. This is host policy for one repository, not duplicated task state.
+The loader rejects unknown keys. It does not search project files, interpolate variables, execute commands, repair permissions, or create a task registry. Use a separate explicit config for each repository.
 
-## Inspect without Docker
-
-Build the code, then invoke the diagnostic command from the target worktree or one of its subdirectories:
-
-```sh
-npm run build
-# From the target worktree:
-node /path/to/trusted/pi-worktree/dist/host/cli.js inspect \
-  --config /home/alice/.config/pi-worktree/shop.json
-```
-
-It prints JSON containing `worktreePath`, `gitDir`, `commonGitDir`, `branch` (null for detached HEAD), and `head`. Non-ASCII characters are escaped in the JSON output so Git-controlled names cannot inject terminal control/bidi text. Errors are JSON on stderr with a nonzero exit code.
-
-This command does not start a container, lock/reserve a worktree, change Git state, or run project checks. `list` and `open` CLI modes are still pending. Inspection is a live snapshot, not an atomic guarantee against simultaneous manual Git edits.
-
-## Start Pi in the current tab
-
-After building the integrated image and preparing the agent volume (see [container setup](../container/README.md)), run from the worktree in a Kitty terminal:
+The task container does not receive host Git global config. Configure commit identity in the repository if needed, especially for sync merge commits:
 
 ```sh
-node /path/to/trusted/pi-worktree/dist/host/cli.js start \
-  --config /home/alice/.config/pi-worktree/shop.json
+git -C /home/alice/projects/shop config user.name 'Alice'
+git -C /home/alice/projects/shop config user.email 'alice@example.com'
 ```
 
-A possible host alias, after testing your installation:
+## Commands
+
+All commands require `--config /absolute/path/to/host.json`:
+
+| Command | Scope |
+| --- | --- |
+| `inspect` | From the selected worktree/subdirectory: print Git location, branch and HEAD; no Docker, lock or mutation |
+| `start` | From the selected worktree: run Pi attached in **this terminal**; TTY and non-root UID/GID required |
+| `list [--json]` | Use configured repository regardless of cwd; live Git status via isolated Docker helpers |
+| `open <branch-or-ID-prefix>` | Use configured repository; open one existing worktree in a **new** Kitty tab |
+| `recover` | From selected worktree: explicitly stop/remove its verified leftover task container |
+| `recover-git` | Use configured repository: explicitly stop/remove a verified orphan Git helper |
+
+An alias after installing/testing the release:
 
 ```sh
-alias piw='node /path/to/trusted/pi-worktree/dist/host/cli.js start --config /home/alice/.config/pi-worktree/shop.json'
+alias piw='node /home/alice/.local/lib/pi-worktree/RELEASE/dist/host/cli.js start --config /home/alice/.config/pi-worktree/shop.json'
 ```
 
-`start` requires terminal stdin/stdout and a non-root host UID/GID. It discovers the current worktree, acquires its advisory lock, creates a private request socket, revalidates mount directories/socket identity, and creates a **stopped** named container. After verifying its ID/ownership labels and revalidating Git paths again, it runs `docker container start --attach --interactive <id>` with inherited terminal I/O. The image entrypoint continues the latest Pi session.
+`list`, `open` and `recover-git` work when all managed tabs are closed and need no TTY. `open` accepts a branch or an unambiguous lowercase hex ID prefix (at least 8 characters), never a path/revision. Already-active worktrees are reported without focusing or changing their tabs. Dirty/conflicted closed worktrees can reopen; unavailable inspections are refused. Human lists sanitize untrusted text; JSON output is ASCII-escaped. `list --json` includes unavailable entries with reasons; inspect each record's `inspection` field, not just the outer success flag.
 
-There is no registry or persistent completion flag. Docker labels record only runtime ownership: managed marker, hashes of the worktree/common Git paths, and a random run UUID. The predictable container name is an additional duplicate-open guard, not a replacement for the OS lock. The private request server runs while Pi is attached, but currently returns `unavailable` for valid worktree operations because their handlers are not implemented yet.
+### Start Pi in the current tab
+
+After [image/volume setup](../container/README.md), invoke the alias from an authorized worktree in Kitty. Startup discovers Git paths, acquires the worktree lifetime lock, creates a private request socket, pins mount identities, and creates a **stopped** named container. It verifies the ID/ownership and revalidates mounts, Git pointers and socket identity before attached start. The image continues the latest session in `/pi/agent/sessions/<canonical-worktree-path-hash>`.
+
+The supervisor serves exactly four [request operations](protocol.md). Each repository operation is serialized under a **separate repository OS mutex**. Creation attaches an existing branch without changing its upstream, or creates a new branch at the source HEAD with the source local branch as parent. A slug plus full branch hash determines the destination. Existing paths fail without overwriting.
+
+Only a new Kitty tab may be launched, with a fixed supervisor command and `--keep-focus --hold`. The repository mutex stays held until the new supervisor's lifetime lock is observed (up to 15 seconds). This confirms handoff, **not successful Pi initialization**; inspect the held tab for errors. An unconfirmed launch or client timeout is not proof nothing happened. Inspect Git and the new tab before retrying. Failed creation preserves any branch, worktree or preallocated empty destination for explicit inspection; there is no destructive rollback.
 
 ### Shutdown
 
-- Normal completion propagates the attached Docker CLI's exit status. SIGINT/SIGTERM/SIGHUP request cleanup (exit codes 130/143/129 respectively).
-- The server stops accepting requests and aborts handlers. Cleanup stops the verified container ID with Docker's 10-second grace period, then removes it without `--force` or `--volumes` and confirms it is gone.
-- Only then is the attached Docker client terminated if necessary. Active request handlers must finish before private directories and the worktree lock are released.
-- Named Pi volumes and Git worktrees/branches/files are never deleted. Files outside the prescribed mounts were never promised persistence.
-- If Docker state/stop/removal cannot be confirmed, the supervisor logs a notice, **keeps the lock and retries**, even if the tab has closed. Restore daemon access (or undo a manual pause) to allow cleanup. Repeated termination signals do not bypass this protection.
+- Normal completion returns the attached Docker exit status. SIGINT/SIGTERM/SIGHUP request cleanup (130/143/129).
+- The server stops accepting requests and aborts handlers. Cleanup stops the verified task ID with a 10-second grace period, removes it without force/volume deletion, and confirms absence.
+- The attachment disconnects only after removal. Request handlers (including Git-helper cleanup) must settle before private directories and lifetime locks are released.
+- Worktrees, branches, dirty files and the named Pi volume remain. Container files outside prescribed mounts are disposable. Kitty's held tab may remain after the command exits; close it explicitly.
+- If Docker state/stop/removal is uncertain, cleanup **retains the lock and retries**. Restore daemon access (or undo a manual pause). Repeated termination does not bypass this protection.
 
-Supervised containers deliberately do **not** use Docker auto-remove (`--rm`). Keeping the stopped container until verified cleanup avoids losing identity during races and makes interrupted startup recoverable. The auth-only example in the container docs still uses `--rm`.
+Managed task/helper containers deliberately do **not** use `--rm`. Ownership labels contain a managed marker, path hashes and run UUID; helpers additionally have `io.pi-worktree.role=git`. Predictable names are duplicate/orphan guards, not a task registry.
 
-## Recover a leftover container
+## Recovery
 
-SIGKILL, host/process failure, or a forcibly interrupted cleanup can leave a running or stopped container. OS lock release alone does **not** prove Docker stopped. A new `start` refuses any occupied worktree container name; it never automatically steals, attaches to, or kills that container.
+SIGKILL, host failure or an interrupted cleanup can leave containers. OS lock release does **not** prove Docker stopped. Startup refuses an occupied task name; it also refuses an active/orphan repository helper. It never automatically steals or kills one.
 
-After checking that the previous managed tab is gone, use this explicit **host-only** command from that worktree:
+### Recover a leftover container
+
+After verifying the old tab is gone, run from that worktree with the same runtime/daemon configuration:
 
 ```sh
-node /path/to/trusted/pi-worktree/dist/host/cli.js recover \
-  --config /home/alice/.config/pi-worktree/shop.json
+node /trusted/pi-worktree/dist/host/cli.js recover --config /absolute/host.json
 ```
 
-It must acquire the same worktree lock and match the managed/worktree/repository labels and run UUID before stopping/removing that exact ID. A live managed tab or an unrecognized name collision is refused. No leftover is a no-op. Nothing is deleted from Git or the named agent volume. This command is intentionally not part of the container request protocol.
+Recovery must acquire the worktree lock and verify managed/worktree/repository labels and run UUID before stopping/removing the exact full ID. A live session or unrecognized name collision is refused; no leftover is a no-op. Git and named volumes are untouched.
 
-If the image is absent, Docker is inaccessible, Git metadata is corrupt, or an unrecognized container owns the name, fix/inspect the problem explicitly on the host; do not delete lock files. Abrupt death can also leave private runtime directories. Recovery does not sweep other tabs' directories; normal shutdown removes its own, and the host runtime location can be cleared once all sessions are stopped.
+### Recover a leftover Git helper
 
-## Discovery boundary
+If list/creation/start reports a helper left over, first wait for any live operation. If its owner died:
 
-Discovery uses `git worktree list --porcelain -z`, then checks the current cwd against the configured repository and task root. A Git-listed path alone is not mount authorization. Linked `.git`, `commondir`, and backlink files must agree and resolve to this repository's own `worktrees/<id>` metadata. Pointer reads are bounded, reject symlinks/hard links and non-regular files, and do not repair anything.
+```sh
+node /trusted/pi-worktree/dist/host/cli.js recover-git --config /absolute/host.json
+```
 
-Main/linked worktrees, subdirectories, symlink aliases of cwd, detached HEAD, SHA-1 and SHA-256 repositories are supported. Separate Git directories, bare repositories as the configured main checkout, nested repositories/submodules, unregistered/out-of-policy worktrees and unborn/unreadable HEAD are refused. Existing worktrees in other locations are not deleted or moved; choose a suitable dedicated root or discuss additional host policy first.
+This acquires the **repository mutex nonblocking** and verifies the helper name/scope/role before removing it by full ID. A live owner holding the mutex prevents recovery. It never removes task containers. Interrupted worktree creation may have changed Git before failure: inspect `git worktree list`, branch/upstream and the preserved destination explicitly before retrying; no forced repair or deletion occurs.
 
-The reader runs only fixed discovery builtins, using an absolute Git executable, explicit worktree/Git/common paths, a fresh environment, no automatically loaded system/global config, no pager/hooks/fsmonitor, no object replacement, **no lazy fetching**, and no allowed transport protocols. A missing promisor object must fail rather than launch a configured remote helper. Tests cover that execution path with a harmless marker script.
+If Git metadata or container ownership is unrecognized, investigate on the host. Never delete lock files to unlock a worktree. Empty 0600 lock files are not persisted open/closed state. Private runtime directories left by abrupt death are not swept automatically; clear them only after **all** sessions/helpers have stopped. Do not unlink live lock files or reset a runtime root while Docker writers survive.
 
-**This is not a general Git sandbox.** Git still reads repository config and includes. Do not extend this reader with status, checkout, worktree creation, merge or fetch commands: those can invoke additional repository-controlled programs. They require a separate execution-isolation design before host-side use.
+## Git execution boundary
 
-The Docker argument builder now always bind-mounts the common Git directory separately, including inside the original checkout. On Linux that mount point cannot be replaced from inside the container, preventing a later common-directory bind from being redirected by replacing `.git` with a symlink. The task-root parent must never be mounted into task containers. Startup checks canonical paths and device/inode identities before create and before attach, and validates its own private socket. These checks detect observed replacements; they are not an atomic sandbox against concurrent hostile host filesystem operations. Real Docker bind behavior, terminal restoration, tab-close behavior, authentication, and file ownership still need deployment smoke tests.
+Host discovery runs only fixed read-only builtins: worktree metadata, ref/HEAD resolution and branch syntax/existence checks. It uses an absolute Git executable, explicit worktree/Git/common paths, a fresh environment, no global/system config, no pager/hooks/fsmonitor, no object replacement, no lazy fetching and no transport protocols. It never runs host project status, checkout, merge or worktree-add.
+
+Status and creation instead run in temporary **non-root, network-disabled helpers**, with read-only rootfs, dropped capabilities, no-new-privileges and writable `/tmp`. Inspection mounts only the selected worktree/common Git read-only. Creation mounts only the host-precreated empty destination and common Git read/write, **not the source files or destination parent**. Helpers receive no agent volume, credentials or supervisor/Docker/Kitty socket. A deterministic per-repository container name blocks replacement after owner death. Cancellation retains the repository mutex until verified cleanup completes.
+
+The shared Git backend disables hooks, fsmonitor, maintenance/auto-GC, signing, executable clean/smudge/process filters, external merge drivers and remote/lazy fetches. `/worktree-done`, sync and ff-only integration use that backend **inside the task container**; task inspection uses the helper. These commands never intentionally run project checks. Config and files can still change concurrently: this is not isolation of a task from its own agent.
+
+Important restrictions:
+
+- Linked `.git`, `commondir` and backlink files must agree and point to this repository's `worktrees/<id>` metadata. Reads are bounded and reject symlinks, hard links and non-regular files. Git-listed paths alone are not mount authorization.
+- Main/linked worktrees, cwd subdirectories/symlink aliases, detached HEAD, SHA-1 and SHA-256 are supported. Bare/separate-Git/nested repositories, unauthorized/unregistered worktrees and unborn/unreadable HEAD are refused. Missing/prunable entries are shown unavailable, not repaired.
+- Git-only checks/integration refuse submodules/gitlinks and active cherry-pick/revert/sequencer state. Filter-dependent worktrees (for example expanded LFS files) can look dirty with filters disabled; use manual Git operations for unsupported semantics.
+- Common Git is **always a separate bind**, including inside the main checkout, so a container cannot replace that mount root with a symlink. Task-root parents are never mounted. Directory inode/Git pointer revalidation occurs before helper/task start, but is not atomic protection against hostile simultaneous **host** filesystem edits.
+- Shared Git metadata means tasks are not isolated from each other. Keep agents idle during sync/integration; cleanliness/head checks are snapshots, not transactional locks on another agent's work.

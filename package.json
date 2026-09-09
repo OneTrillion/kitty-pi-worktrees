@@ -8,7 +8,8 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "node --test test/*.test.ts",
-    "check": "npm run typecheck && npm test && npm run build"
+    "smoke:docker": "node --test test/docker-smoke.ts",
+    "check": "npm run typecheck && npm test && npm run build && node --test test/compiled-smoke.ts"
   },
   "dependencies": { "zod": "4.1.12" },
   "devDependencies": {

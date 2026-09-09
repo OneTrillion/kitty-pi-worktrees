@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import type { HostConfig } from "./config.ts";
 import type { DockerClient } from "./docker-client.ts";
@@ -7,6 +7,8 @@ import { cleanupContainer, owned, ROLE_LABEL } from "./container-cleanup.ts";
 import { MANAGED_LABEL, REPOSITORY_LABEL, RUN_LABEL, RUN_ID_PATTERN, WORKTREE_LABEL, validateDirectoryMount } from "./docker.ts";
 import { acquireWorktreeLock, WorktreeBusyError } from "./lock.ts";
 import { worktreeId } from "./paths.ts";
+import { isAuthorizedWorktree, locateGit } from "./git-discovery.ts";
+import { pinMountDirectories } from "./mount-identity.ts";
 import { HelperReplySchema, HelperRequestSchema, type HelperRequest } from "../shared/helper.ts";
 
 export function gitHelperName(config: HostConfig): string {
@@ -37,6 +39,11 @@ export function gitHelperArgs(config: HostConfig, request: HelperRequest, runId:
   const common = join(config.repositoryPath, ".git");
   if (request.location.commonGitDir !== common) throw new Error("Helper common Git directory mismatch");
   const path = request.op === "inspect" ? request.location.worktreePath : request.destination;
+  if (!isAuthorizedWorktree(config, request.location.worktreePath) ||
+      (request.op === "create" && (dirname(path) !== config.worktreeRoot ||
+        request.location.worktreePath !== config.repositoryPath || request.location.gitDir !== common))) {
+    throw new Error("Helper paths are outside the configured worktree policy");
+  }
   validateDirectoryMount(path);
   validateDirectoryMount(common);
   const readonly = request.op === "inspect" ? ",readonly" : "";
@@ -64,13 +71,25 @@ export async function runHelper(config: HostConfig, docker: DockerClient, reques
   const scope = { worktreePath: config.repositoryPath, commonGitDir: join(config.repositoryPath, ".git") };
   const runId = randomUUID();
   const args = gitHelperArgs(config, request, runId, user);
+  const revalidateDirectories = await pinMountDirectories([config.repositoryPath, config.worktreeRoot,
+    request.location.worktreePath, request.location.gitDir, request.location.commonGitDir,
+    ...(request.op === "create" ? [request.destination] : [])]);
+  const revalidate = async (): Promise<void> => {
+    await revalidateDirectories();
+    const current = await locateGit(config, request.location.worktreePath);
+    if (current.gitDir !== request.location.gitDir || current.commonGitDir !== request.location.commonGitDir) {
+      throw new Error("Git helper paths changed during startup");
+    }
+    signal?.throwIfAborted();
+  };
+  await revalidate();
   let id: string | undefined;
   try {
     const createdId = await docker.create(args);
     const info = await docker.lookup(createdId);
     if (!info || info.Name !== `/${name}` || !owned(info, scope, runId, "git")) throw new Error("Git helper identity was not verified");
     id = info.Id;
-    signal?.throwIfAborted();
+    await revalidate();
     const reply = HelperReplySchema.parse(JSON.parse(await docker.capture(id, signal)));
     if (!reply.ok) throw new Error(reply.error);
     return reply.state;

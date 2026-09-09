@@ -4,7 +4,7 @@ import type { HostConfig } from "./config.ts";
 import { containerName, dockerCreateArgs, RUN_LABEL } from "./docker.ts";
 import { createDockerClient, type AttachedContainer, type DockerClient } from "./docker-client.ts";
 import { owned, cleanupContainer } from "./container-cleanup.ts";
-import { assertCanonicalDirectory } from "./files.ts";
+import { pinMountDirectories } from "./mount-identity.ts";
 import { discoverCurrentWorktree, type DiscoveredWorktree } from "./git-discovery.ts";
 import { acquireWorktreeLock } from "./lock.ts";
 import { createRuntimeDirectory, prepareRuntimeRoot } from "./runtime.ts";
@@ -20,14 +20,6 @@ interface SupervisorOptions {
   containerUser?: { uid: number; gid: number };
   cleanupRetryMs?: number;
   configPath?: string;
-}
-
-async function pinDirectories(paths: string[]) {
-  return Promise.all([...new Set(paths)].map(async (path) => {
-    await assertCanonicalDirectory(path);
-    const info = await lstat(path, { bigint: true });
-    return { path, dev: info.dev, ino: info.ino };
-  }));
 }
 
 async function waitForExit(attachment: AttachedContainer, signal: AbortSignal): Promise<number> {
@@ -77,7 +69,7 @@ export async function runHostSession(
     const user = options.containerUser ?? { uid: process.getuid!(), gid: process.getgid!() };
     if (mode === "start" && (user.uid < 1 || user.gid < 1)) throw new Error("Start Pi from a non-root host account");
     location = await discoverCurrentWorktree(config, cwd, shutdown.signal);
-    const pins = await pinDirectories([config.repositoryPath, config.worktreeRoot, location.worktreePath, location.commonGitDir, location.gitDir]);
+    const revalidateDirectories = await pinMountDirectories([config.repositoryPath, config.worktreeRoot, location.worktreePath, location.commonGitDir, location.gitDir]);
     await prepareRuntimeRoot(config.runtimeRoot);
     lock = await acquireWorktreeLock(config.runtimeRoot, location.worktreePath);
     if (lock.canonicalPath !== location.worktreePath) throw new Error("Worktree changed during lock acquisition");
@@ -109,11 +101,7 @@ export async function runHostSession(
         if (current.worktreePath !== location!.worktreePath || current.gitDir !== location!.gitDir || current.commonGitDir !== location!.commonGitDir) {
           throw new Error("Git worktree paths changed during startup");
         }
-        for (const pin of pins) {
-          await assertCanonicalDirectory(pin.path);
-          const info = await lstat(pin.path, { bigint: true });
-          if (info.dev !== pin.dev || info.ino !== pin.ino) throw new Error("A mount directory changed during startup");
-        }
+        await revalidateDirectories();
         const socket = await lstat(socketPath, { bigint: true });
         if (!socket.isSocket() || socket.uid !== BigInt(process.getuid!()) || (socket.mode & 0o777n) !== 0o600n ||
             socket.dev !== socketPin.dev || socket.ino !== socketPin.ino || await realpath(socketPath) !== socketPath) {

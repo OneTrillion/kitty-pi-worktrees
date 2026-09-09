@@ -119,6 +119,21 @@ test("Kitty failure preserves newly created worktree and its local upstream", as
   assert.equal(await git(path, ["rev-parse", "--symbolic-full-name", "@{upstream}"]), "refs/heads/main");
 });
 
+test("unconfirmed Kitty handoff reports uncertainty and preserves the new worktree without relaunching", async (t) => {
+  const fixture = await setup(t);
+  let launches = 0;
+  const service = createWorktreeService(fixture.config, fixture.config.repositoryPath, fixture.client, {
+    user: { uid: 1000, gid: 1000 }, launch: async () => { launches++; }, startupTimeoutMs: 1,
+  });
+  const result = await service.handle({ version: 1, op: "create-or-open", branch: "task" });
+  assert.ok(!result.ok && result.error.code === "unavailable");
+  assert.match(result.error.message, /startup was not confirmed/);
+  assert.equal(launches, 1);
+  const path = deriveWorktreePath(fixture.config.worktreeRoot, "task");
+  assert.equal(await git(path, ["branch", "--show-current"]), "task");
+  assert.deepEqual(await fixture.state(), []);
+});
+
 test("helper mount arguments expose no credentials, host API sockets or task-root parent", async (t) => {
   const { config } = await setup(t);
   const common = join(config.repositoryPath, ".git");
