@@ -24,6 +24,7 @@ export interface DockerClient {
   lookup(nameOrId: string): Promise<ContainerInfo | null>;
   create(args: string[]): Promise<string>;
   attach(id: string): AttachedContainer;
+  capture(id: string, signal?: AbortSignal): Promise<string>;
   stop(id: string): Promise<void>;
   remove(id: string): Promise<void>;
 }
@@ -43,10 +44,11 @@ export async function createDockerClient(config: HostConfig, privateConfigDir: s
   }
   const prefix = ["--host", `unix://${socketPath}`, "--config", privateConfigDir];
   const env = { PATH: "/usr/bin:/bin", HOME: privateConfigDir, LANG: "C", TERM: "xterm-256color" };
-  async function command(args: string[]): Promise<string> {
+  async function command(args: string[], signal?: AbortSignal, timeout = 20000): Promise<string> {
     try {
       const { stdout } = await exec(binary, [...prefix, ...args], {
-        cwd: privateConfigDir, env, encoding: "utf8", timeout: 20000, killSignal: "SIGKILL", maxBuffer: 1024 * 1024,
+        cwd: privateConfigDir, env, encoding: "utf8", timeout, killSignal: "SIGKILL", maxBuffer: 1024 * 1024,
+        ...(signal ? { signal } : {}),
       });
       return stdout.trim();
     } catch (cause) {
@@ -62,7 +64,7 @@ export async function createDockerClient(config: HostConfig, privateConfigDir: s
   }
   return {
     async lookup(target) {
-      if (!/^(?:[a-f0-9]{64}|pi-worktree-[a-f0-9]{64})$/.test(target)) throw new Error("Invalid container identity");
+      if (!/^(?:[a-f0-9]{64}|pi-worktree-(?:git-)?[a-f0-9]{64})$/.test(target)) throw new Error("Invalid container identity");
       const [id] = await matchingIds(target);
       if (!id) return null; // Successful list, not an error interpreted as absence.
       try {
@@ -98,6 +100,9 @@ export async function createDockerClient(config: HostConfig, privateConfigDir: s
           await completion.catch(() => {});
         },
       };
+    },
+    async capture(id, signal) {
+      return command(["container", "start", "--attach", idSchema.parse(id)], signal, 120000);
     },
     async stop(id) { await command(["container", "stop", "--time", "10", idSchema.parse(id)]); },
     async remove(id) { await command(["container", "rm", idSchema.parse(id)]); },

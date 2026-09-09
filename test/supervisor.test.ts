@@ -59,8 +59,11 @@ test("start attaches while serving requests, propagates exit status, and preserv
   const container = await running(fixture);
   assert.equal(await isWorktreeOpen(fixture.config.runtimeRoot, fixture.config.repositoryPath), true);
   const response = await requestSupervisor(socketPath(container), { version: 1, op: "list" });
-  assert.equal(response.ok, false);
-  if (!response.ok) assert.equal(response.error.code, "unavailable"); // Honest until Phase 4/5.
+  assert.equal(response.ok, true);
+  if (response.ok && response.op === "list") {
+    assert.equal(response.worktrees[0]!.inspection, "ok");
+    assert.equal(response.worktrees[0]!.open, true);
+  }
   container.State.Running = false;
   container.exitCode = 7;
   await fixture.save([container]);

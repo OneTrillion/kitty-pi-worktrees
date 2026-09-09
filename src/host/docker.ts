@@ -23,6 +23,7 @@ export interface DockerConfig {
 export interface DockerWorktree {
   worktreePath: string;
   commonGitDir: string;
+  gitDir?: string;
   socketPath: string;
   uid: number;
   gid: number;
@@ -68,6 +69,9 @@ export function dockerRunArgs(config: DockerConfig, worktree: DockerWorktree): s
   validateDirectoryMount(worktree.worktreePath);
   validateDirectoryMount(worktree.commonGitDir);
   validatePath(worktree.socketPath);
+  const gitDir = worktree.gitDir ?? worktree.commonGitDir;
+  validatePath(gitDir);
+  if (!contains(worktree.commonGitDir, gitDir)) throw new Error("Git metadata must be inside the common Git directory");
   if (contains(worktree.commonGitDir, worktree.worktreePath)) {
     throw new Error("A worktree cannot be inside its common Git directory");
   }
@@ -83,6 +87,9 @@ export function dockerRunArgs(config: DockerConfig, worktree: DockerWorktree): s
     "--workdir", worktree.worktreePath,
     "--env", `PI_CODING_AGENT_DIR=${AGENT_DIR}`,
     "--env", `PI_WORKTREE_SOCKET=${SUPERVISOR_SOCKET}`,
+    "--env", `PI_WORKTREE_ROOT=${worktree.worktreePath}`,
+    "--env", `PI_WORKTREE_GIT_DIR=${gitDir}`,
+    "--env", `PI_WORKTREE_COMMON_GIT_DIR=${worktree.commonGitDir}`,
     "--env", "HOME=/tmp/pi-home",
     "--env", "TERM=xterm-256color",
     "--mount", `type=bind,src=${worktree.worktreePath},dst=${worktree.worktreePath}`,

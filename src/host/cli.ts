@@ -3,12 +3,17 @@ import { parseArgs } from "node:util";
 import { loadHostConfig } from "./config.ts";
 import { discoverCurrentWorktree } from "./git-discovery.ts";
 import { runHostSession } from "./supervisor.ts";
+import { runHostCommand } from "./commands.ts";
+import { plainText } from "../shared/title.ts";
 
-const usage = `Usage: node dist/host/cli.js <inspect|start|recover> --config /absolute/path/to/host.json
+const usage = `Usage: node dist/host/cli.js <command> --config /absolute/path/to/host.json
 
-inspect  Print current Git worktree metadata; does not start Docker.
-start    Run one attached Pi container in this terminal (TTY required).
-recover  Stop/remove a verified leftover container while holding the worktree lock.
+inspect      Print current Git metadata; does not start Docker.
+start        Run one attached Pi container in this terminal (TTY required).
+list         List live worktree status (add --json for machine-readable output).
+open NAME    Open a branch or unambiguous worktree ID from list in a NEW Kitty tab.
+recover      Stop/remove a verified leftover task container under its worktree lock.
+recover-git  Stop/remove a verified orphan Git helper under the repository lock.
 
 No command deletes worktrees/branches or runs project checks.`;
 
@@ -20,12 +25,12 @@ function json(value: unknown): string {
 
 async function main(): Promise<void> {
   const { values, positionals } = parseArgs({
-    options: { config: { type: "string" }, help: { type: "boolean" } },
+    options: { config: { type: "string" }, help: { type: "boolean" }, json: { type: "boolean" } },
     allowPositionals: true,
   });
   if (values.help) { console.log(usage); return; }
   const command = positionals[0];
-  if (positionals.length !== 1 || !["inspect", "start", "recover"].includes(command ?? "") || !values.config) {
+  if (positionals.length !== (command === "open" ? 2 : 1) || !["inspect", "start", "recover", "list", "open", "recover-git"].includes(command ?? "") || !values.config || (values.json && command !== "list")) {
     throw new Error(usage);
   }
   const config = await loadHostConfig(values.config);
@@ -33,11 +38,26 @@ async function main(): Promise<void> {
     console.log(json(await discoverCurrentWorktree(config, process.cwd())));
     return;
   }
+  if (command === "list" || command === "open" || command === "recover-git") {
+    const response = await runHostCommand(config, values.config, command, positionals[1]);
+    if (!response) { console.log("Git helper recovery complete"); return; }
+    if (!response.ok) throw new Error(response.error.message);
+    if (response.op === "list" && !values.json) {
+      for (const item of response.worktrees) console.log([
+        item.id.slice(0, 12), plainText(item.branch ?? "(detached)"), item.head?.slice(0, 10) ?? "?",
+        item.open ? "open" : "closed", item.inspection === "ok" ? item.status : `unavailable: ${plainText(item.error)}`,
+        plainText(item.upstream?.ref ?? "(no upstream)"), plainText(item.path, 8192),
+        item.locked ? `git-locked: ${plainText(item.lockReason ?? "")}` : "",
+        item.prunable ? `prunable: ${plainText(item.pruneReason ?? "")}` : "",
+      ].filter(Boolean).join(" | "));
+    } else console.log(json(response));
+    return;
+  }
   if (command === "start" && (!process.stdin.isTTY || !process.stdout.isTTY)) {
     throw new Error("start requires an interactive terminal; run it in a Kitty tab");
   }
   try {
-    process.exitCode = await runHostSession(config, process.cwd(), command as "start" | "recover");
+    process.exitCode = await runHostSession(config, process.cwd(), command as "start" | "recover", { configPath: values.config });
   } finally {
     // Docker normally restores the terminal itself, but its CLI may have died abruptly.
     if (command === "start" && process.stdin.isTTY) {

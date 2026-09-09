@@ -28,6 +28,8 @@ test("attached container gets only the four prescribed mounts and the host UID/G
   ]);
   assert.deepEqual(values(args, "--env"), [
     `PI_CODING_AGENT_DIR=${AGENT_DIR}`, `PI_WORKTREE_SOCKET=${SUPERVISOR_SOCKET}`,
+    `PI_WORKTREE_ROOT=${worktree.worktreePath}`, `PI_WORKTREE_GIT_DIR=${worktree.commonGitDir}`,
+    `PI_WORKTREE_COMMON_GIT_DIR=${worktree.commonGitDir}`,
     "HOME=/tmp/pi-home", "TERM=xterm-256color",
   ]);
   assert.deepEqual(args.slice(-3), [config.image, "--session-dir", sessionDirectory(worktree.worktreePath)]);

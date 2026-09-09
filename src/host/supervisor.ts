@@ -1,15 +1,16 @@
 import { randomUUID } from "node:crypto";
 import { lstat, realpath } from "node:fs/promises";
-import { setTimeout as delay } from "node:timers/promises";
 import type { HostConfig } from "./config.ts";
-import { containerName, dockerCreateArgs, MANAGED_LABEL, REPOSITORY_LABEL, RUN_ID_PATTERN, RUN_LABEL, WORKTREE_LABEL } from "./docker.ts";
-import { createDockerClient, type AttachedContainer, type ContainerInfo, type DockerClient } from "./docker-client.ts";
+import { containerName, dockerCreateArgs, RUN_LABEL } from "./docker.ts";
+import { createDockerClient, type AttachedContainer, type DockerClient } from "./docker-client.ts";
+import { owned, cleanupContainer } from "./container-cleanup.ts";
 import { assertCanonicalDirectory } from "./files.ts";
 import { discoverCurrentWorktree, type DiscoveredWorktree } from "./git-discovery.ts";
 import { acquireWorktreeLock } from "./lock.ts";
-import { worktreeId } from "./paths.ts";
 import { createRuntimeDirectory, prepareRuntimeRoot } from "./runtime.ts";
 import { startRequestServer } from "./server.ts";
+import { createWorktreeService } from "./worktrees.ts";
+import { gitHelperName } from "./git-helper.ts";
 
 interface SupervisorOptions {
   signal?: AbortSignal;
@@ -18,15 +19,7 @@ interface SupervisorOptions {
   dockerFactory?: typeof createDockerClient;
   containerUser?: { uid: number; gid: number };
   cleanupRetryMs?: number;
-}
-
-function owned(info: ContainerInfo, location: DiscoveredWorktree, runId?: string): boolean {
-  const labels = info.Config.Labels;
-  return labels?.[MANAGED_LABEL] === "1" &&
-    labels[WORKTREE_LABEL] === worktreeId(location.worktreePath) &&
-    labels[REPOSITORY_LABEL] === worktreeId(location.commonGitDir) &&
-    RUN_ID_PATTERN.test(labels[RUN_LABEL] ?? "") &&
-    (runId === undefined || labels[RUN_LABEL] === runId);
+  configPath?: string;
 }
 
 async function pinDirectories(paths: string[]) {
@@ -47,36 +40,7 @@ async function waitForExit(attachment: AttachedContainer, signal: AbortSignal): 
   });
 }
 
-/** Stop/remove only a verified full ID. API uncertainty retains the OS lock and retries. */
-async function cleanupContainer(
-  docker: DockerClient, location: DiscoveredWorktree, runId: string, id: string | undefined,
-  retryMs: number, notice: (message: string) => void,
-): Promise<void> {
-  let warned = false;
-  for (;;) {
-    try {
-      const info = await docker.lookup(id ?? containerName(location.worktreePath));
-      if (!info) return;
-      if (!owned(info, location, runId)) {
-        if (!id) return; // Failed create raced with somebody else's container: never touch it.
-        throw new Error("Container ownership changed unexpectedly");
-      }
-      id = info.Id;
-      if (info.State.Running || info.State.Restarting || info.State.Paused) await docker.stop(id);
-      await docker.remove(id); // No --force or --volumes. Removal also defeats a delayed start request.
-      if (await docker.lookup(id)) throw new Error("Container removal has not been confirmed");
-      return;
-    } catch {
-      if (!warned) {
-        notice("Docker cleanup is unconfirmed; retaining the worktree lock and retrying. Restore Docker access; SIGKILL will require host recovery.");
-        warned = true;
-      }
-      await delay(retryMs);
-    }
-  }
-}
-
-/** One call per host process/tab. No Git mutation or worktree-opening handlers yet. */
+/** One call per host process/tab; container requests are delegated to the narrow worktree service. */
 export async function runHostSession(
   config: HostConfig, cwd: string, mode: "start" | "recover", options: SupervisorOptions = {},
 ): Promise<number> {
@@ -132,9 +96,11 @@ export async function runHostSession(
       } else notice("No leftover container for this worktree");
     } else {
       if (existing) throw new Error(`Container ${existing.Id} already occupies this worktree name. Inspect it on the host; use recover for a verified managed leftover.`);
-      server = await startRequestServer(config.runtimeRoot, () => ({
-        version: 1, ok: false, error: { code: "unavailable", message: "Worktree commands are not implemented in this build yet" },
-      }));
+      if (await docker.lookup(gitHelperName(config))) throw new Error("A repository Git helper is active or left over. Wait for the operation, or use host recover-git if its owner died");
+      const service = createWorktreeService(config, location.worktreePath, docker, {
+        user, ...(options.configPath ? { configPath: options.configPath } : {}),
+      });
+      server = await startRequestServer(config.runtimeRoot, (request, signal) => service.handle(request, signal));
       void server.failure.then((error) => { fatal = error; shutdown.abort(); });
       const socketPin = await lstat(server.socketPath, { bigint: true });
       const socketPath = server.socketPath;

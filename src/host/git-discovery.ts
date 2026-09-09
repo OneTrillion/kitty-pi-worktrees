@@ -5,6 +5,8 @@ import { promisify } from "node:util";
 import type { HostConfig } from "./config.ts";
 import { validateDirectoryMount } from "./docker.ts";
 import { assertCanonicalDirectory, containsPath, readRegularFile } from "./files.ts";
+import { parseWorktreeRecords } from "../shared/worktree-records.ts";
+import { assertBranchName } from "../shared/branch.ts";
 
 const exec = promisify(execFile);
 interface GitLocation {
@@ -62,7 +64,7 @@ export function parseWorktreePaths(output: string): string[] {
   return paths;
 }
 
-function isAuthorizedWorktree(config: HostConfig, path: string): boolean {
+export function isAuthorizedWorktree(config: HostConfig, path: string): boolean {
   // Tasks are immediate children of the dedicated root, not arbitrary descendants.
   return path === config.repositoryPath || (dirname(path) === config.worktreeRoot && !/[\p{Cc}\p{Cf}]/u.test(path));
 }
@@ -77,7 +79,7 @@ async function pointer(path: string, prefix = ""): Promise<string> {
 }
 
 /** Paths are authorized against HOST config before following any .git pointer. */
-async function locateGit(config: HostConfig, worktreePath: string): Promise<GitLocation> {
+export async function locateGit(config: HostConfig, worktreePath: string): Promise<GitLocation> {
   if (!isAuthorizedWorktree(config, worktreePath)) throw new Error("Worktree is outside the host-authorized paths");
   validateDirectoryMount(worktreePath);
   await assertCanonicalDirectory(worktreePath);
@@ -98,7 +100,19 @@ async function locateGit(config: HostConfig, worktreePath: string): Promise<GitL
   return { worktreePath, commonGitDir, gitDir };
 }
 
-/** Discover only the current host cwd. ID-based opening/listing comes in later phases. */
+export async function listGitWorktrees(config: HostConfig, signal?: AbortSignal) {
+  const main = await locateGit(config, config.repositoryPath);
+  return parseWorktreeRecords((await readGit(main, ["worktree", "list", "--porcelain", "-z"], signal))!);
+}
+
+export async function localBranchExists(config: HostConfig, branch: string, signal?: AbortSignal): Promise<boolean> {
+  assertBranchName(branch);
+  const main = await locateGit(config, config.repositoryPath);
+  // Fixed read-only ref lookup; no revision expansion, lazy fetching or user commands.
+  return await readGit(main, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], signal, true) !== null;
+}
+
+/** Discover the current host cwd and authorize it against the configured repository. */
 export async function discoverCurrentWorktree(config: HostConfig, cwd: string, signal?: AbortSignal): Promise<DiscoveredWorktree> {
   signal?.throwIfAborted();
   const canonicalCwd = await realpath(cwd);

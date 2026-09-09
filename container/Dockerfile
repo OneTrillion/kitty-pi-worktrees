@@ -16,6 +16,7 @@ COPY --from=build /build/package.json /opt/pi-worktree/package.json
 COPY --from=build /build/node_modules /opt/pi-worktree/node_modules
 COPY --from=build /build/dist/extension /opt/pi-worktree/dist/extension
 COPY --from=build /build/dist/shared /opt/pi-worktree/dist/shared
+COPY --from=build /build/dist/git /opt/pi-worktree/dist/git
 COPY container/start.sh /opt/pi-worktree/start.sh
 ARG PI_UID=1000
 ARG PI_GID=1000

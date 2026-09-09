@@ -1,0 +1,10 @@
+# Put these in the HOST Kitty configuration, never in a container.
+allow_remote_control socket-only
+listen_on unix:${XDG_RUNTIME_DIR}/kitty-pi
+# Kitty may suffix the actual socket with its PID. The host launcher can use
+# KITTY_LISTEN_ON, which contains the actual address, or explicit kittySocket.
+tab_bar_style custom
+tab_bar_min_tabs 1
+# Copy the trusted tab_bar.py into the Kitty config directory. Do not symlink it
+# to a checkout that task containers can modify. No remote-control passwords,
+# socket paths or KITTY_* environment are forwarded into containers.

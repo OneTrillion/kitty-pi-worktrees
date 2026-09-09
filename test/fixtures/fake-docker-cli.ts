@@ -4,6 +4,7 @@ import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import type { ContainerInfo } from "../../src/host/docker-client.ts";
+import { helperMain } from "../../src/git/worker.ts";
 
 export interface FakeContainer extends ContainerInfo {
   createArgs: string[];
@@ -80,7 +81,13 @@ if (args[0] === "create") {
   found.State.Running = true;
   found.attachedPid = process.pid;
   save(containers);
-  if (typeof controls.exitCode === "number") {
+  if (found.Config.Labels?.["io.pi-worktree.role"] === "git") {
+    const reply = await helperMain(found.createArgs.at(-1)!);
+    const current = state();
+    const item = current.find((entry) => entry.Id === found.Id);
+    if (item) { item.State.Running = false; save(current); }
+    console.log(reply);
+  } else if (typeof controls.exitCode === "number") {
     const code = controls.exitCode;
     setTimeout(() => {
       const current = state();
