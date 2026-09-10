@@ -26,15 +26,15 @@ The config loader does not expand variables in JSON. Keep the socket under the p
 
 The structured window title is `pi-worktree:<state>:<task>`. It must remain a **window title**: do not force a static tab title, which would hide Pi's updates.
 
-| State | Color | Meaning |
-| --- | --- | --- |
-| `starting` | Gray | Host launched the new supervisor |
-| `working` | Blue | Pi agent started work |
-| `attention` | Amber | Idle/needs attention, or initial Git state unavailable |
-| `done` | Green | User declared clean committed work complete; not a test result |
-| `conflict` | Red | Git conflicts or merge/rebase state |
-| `merged` | Dim green | Task HEAD is contained in its upstream |
-| `failed` | Red | Extension command error |
+| State       | Color     | Meaning                                                        |
+| ----------- | --------- | -------------------------------------------------------------- |
+| `starting`  | Gray      | Host launched the new supervisor                               |
+| `working`   | Blue      | Pi agent started work                                          |
+| `attention` | Amber     | Idle/needs attention, or initial Git state unavailable         |
+| `done`      | Green     | User declared clean committed work complete; not a test result |
+| `conflict`  | Red       | Git conflicts or merge/rebase state                            |
+| `merged`    | Dim green | Task HEAD is contained in its upstream                         |
+| `failed`    | Red       | Extension command error                                        |
 
 Idle state is rederived on **`agent_settled`**, not `agent_end` (Pi may retry/compact after the latter). `done` resets on later agent/session activity and is not restored as a persistent flag. Another program in the container can change its own title: colors are UI hints, not trustworthy attestations.
 

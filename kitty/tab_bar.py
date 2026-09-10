@@ -1,4 +1,5 @@
 """Trusted host-only Kitty tab bar. Titles are data, never templates or code."""
+
 import re
 import unicodedata
 
@@ -15,8 +16,10 @@ MARKER = re.compile(r"pi-worktree:(starting|working|attention|done|conflict|merg
 
 
 def plain(text):
-    return "".join(" " if unicodedata.category(c) in ("Cc", "Cf", "Cs", "Zl", "Zp") else c
-                   for c in text[:1024])[:240]
+    return "".join(
+        " " if unicodedata.category(character) in ("Cc", "Cf", "Cs", "Zl", "Zp") else character
+        for character in text[:1024]
+    )[:240]
 
 
 def parse_title(title):

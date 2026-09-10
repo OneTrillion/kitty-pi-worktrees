@@ -1,5 +1,3 @@
-# Build from the repository root:
-# docker build -f container/Dockerfile --build-arg PI_BASE_IMAGE=your-pi-image ... .
 ARG PI_BASE_IMAGE
 FROM node:24-bookworm-slim AS build
 WORKDIR /build

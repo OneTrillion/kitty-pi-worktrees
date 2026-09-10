@@ -1,14 +1,26 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { FrameDecoder, decodeRequest, decodeResponse, encodeRequest, encodeResponse } from "../src/shared/framing.ts";
-import { MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, type Request } from "../src/shared/protocol.ts";
+import {
+  FrameDecoder,
+  decodeRequest,
+  decodeResponse,
+  encodeRequest,
+  encodeResponse,
+} from "../src/shared/framing.ts";
+import {
+  MAX_REQUEST_BYTES,
+  MAX_RESPONSE_BYTES,
+  type Request,
+  type Response,
+  type Worktree,
+} from "../src/shared/protocol.ts";
 
 const request: Request = { version: 1, op: "create-or-open", branch: "café/修正" };
-function rawFrame(body: Buffer): Buffer {
+const rawFrame = (body: Buffer): Buffer => {
   const header = Buffer.alloc(4);
   header.writeUInt32BE(body.length);
   return Buffer.concat([header, body]);
-}
+};
 
 test("requests round trip across every possible split, including inside UTF-8 characters", () => {
   const frame = encodeRequest(request);
@@ -32,7 +44,7 @@ test("byte-at-a-time input and empty chunks", () => {
 });
 
 test("responses round trip with a separate larger limit", () => {
-  const response = { version: 1, ok: true, op: "list", worktrees: [] } as const;
+  const response: Response = { version: 1, ok: true, op: "list", worktrees: [] };
   const decoder = new FrameDecoder(MAX_RESPONSE_BYTES);
   decoder.push(encodeResponse({ ...response, worktrees: [] }));
   assert.deepEqual(decodeResponse(decoder), response);
@@ -73,8 +85,14 @@ test("reject trailing data and multiple frames, even in a later chunk", () => {
 });
 
 test("reject invalid UTF-8, BOM, JSON, schemas and protocol versions", () => {
-  for (const body of [Buffer.from([0xff]), Buffer.from('\ufeff{}'), Buffer.from("{"), Buffer.from("null"),
-    Buffer.from('{"version":2,"op":"list"}'), Buffer.from('{"version":1,"op":"list","command":"id"}')]) {
+  for (const body of [
+    Buffer.from([0xff]),
+    Buffer.from("\ufeff{}"),
+    Buffer.from("{"),
+    Buffer.from("null"),
+    Buffer.from('{"version":2,"op":"list"}'),
+    Buffer.from('{"version":1,"op":"list","command":"id"}'),
+  ]) {
     const decoder = new FrameDecoder(MAX_REQUEST_BYTES);
     decoder.push(rawFrame(body));
     assert.throws(() => decodeRequest(decoder));
@@ -83,12 +101,30 @@ test("reject invalid UTF-8, BOM, JSON, schemas and protocol versions", () => {
 
 test("outbound messages also undergo schema and byte-limit validation", () => {
   assert.throws(() => encodeRequest({ ...request, branch: "../escape" }));
-  assert.throws(() => encodeResponse({ version: 1, ok: true, op: "list", worktrees: [] , extra: true } as never));
+  assert.throws(() => encodeResponse({ version: 1, ok: true, op: "list", worktrees: [], extra: true }));
   // Many individually valid objects can still exceed the response frame limit.
-  const item = {
-    id: "a".repeat(64), path: "/" + "a".repeat(8000), branch: null, head: null,
-    upstream: null, open: false, locked: false, lockReason: null, prunable: true,
-    pruneReason: "missing", inspection: "unavailable" as const, error: "missing",
+  const item: Worktree = {
+    id: "a".repeat(64),
+    path: "/" + "a".repeat(8000),
+    branch: null,
+    head: null,
+    upstream: null,
+    open: false,
+    locked: false,
+    lockReason: null,
+    prunable: true,
+    pruneReason: "missing",
+    inspection: "unavailable",
+    error: "missing",
   };
-  assert.throws(() => encodeResponse({ version: 1, ok: true, op: "list", worktrees: Array.from({ length: 150 }, () => item) }), /size limit/);
+  assert.throws(
+    () =>
+      encodeResponse({
+        version: 1,
+        ok: true,
+        op: "list",
+        worktrees: Array.from({ length: 150 }, () => item),
+      }),
+    /size limit/,
+  );
 });

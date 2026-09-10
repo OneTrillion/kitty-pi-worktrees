@@ -25,11 +25,19 @@ test("Docker endpoint defaults to a local socket and cannot be a remote URL or t
 
 test("host configuration rejects unknown fields, wrong types, unsafe paths and mount/options syntax", async (t) => {
   const { configPath, config } = await setupGit(t);
-  const invalid: unknown[] = [null, [], { ...config, command: "id" }, { ...config, image: "--privileged" },
-    { ...config, image: "image extra" }, { ...config, agentVolume: "/host/auth" },
-    { ...config, agentVolume: "name,readonly" }, { ...config, repositoryPath: "relative" },
-    { ...config, runtimeRoot: "/tmp/a/../run" }, { ...config, worktreeRoot: "/tmp/a,readonly" },
-    { ...config, runtimeRoot: "/tmp/run\n" }, { ...config, image: 42 },
+  const invalid: unknown[] = [
+    null,
+    [],
+    { ...config, command: "id" },
+    { ...config, image: "--privileged" },
+    { ...config, image: "image extra" },
+    { ...config, agentVolume: "/host/auth" },
+    { ...config, agentVolume: "name,readonly" },
+    { ...config, repositoryPath: "relative" },
+    { ...config, runtimeRoot: "/tmp/a/../run" },
+    { ...config, worktreeRoot: "/tmp/a,readonly" },
+    { ...config, runtimeRoot: "/tmp/run\n" },
+    { ...config, image: 42 },
   ];
   for (const value of invalid) {
     await writeFile(configPath, JSON.stringify(value));

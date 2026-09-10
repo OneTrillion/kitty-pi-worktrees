@@ -15,13 +15,28 @@ test("container entrypoint loads the built-in extension outside the volume and c
   await mkdir(agentDir);
   // Substitute Pi only, so we test the actual shell entrypoint without a TUI/provider.
   await writeFile(join(root, "pi"), '#!/bin/sh\nprintf "%s\\n" "$@"\n', { mode: 0o755 });
-  const env = { ...process.env, PATH: `${root}:${process.env.PATH}`, HOME: join(root, "home"), PI_CODING_AGENT_DIR: agentDir };
-  const { stdout } = await exec("/bin/sh", ["container/start.sh", "--session-dir", "/pi/agent/sessions/id with spaces"], { env });
+  const env = {
+    ...process.env,
+    PATH: `${root}:${process.env.PATH}`,
+    HOME: join(root, "home"),
+    PI_CODING_AGENT_DIR: agentDir,
+  };
+  const { stdout } = await exec(
+    "/bin/sh",
+    ["container/start.sh", "--session-dir", "/pi/agent/sessions/id with spaces"],
+    { env },
+  );
   assert.deepEqual(stdout.trimEnd().split("\n"), [
-    "--extension", "/opt/pi-worktree/dist/extension/index.js", "--continue",
-    "--session-dir", "/pi/agent/sessions/id with spaces",
+    "--extension",
+    "/opt/pi-worktree/dist/extension/index.js",
+    "--continue",
+    "--session-dir",
+    "/pi/agent/sessions/id with spaces",
   ]);
-  await assert.rejects(exec("/bin/sh", ["container/start.sh"], {
-    env: { ...env, PI_CODING_AGENT_DIR: join(root, "missing") },
-  }), /volume is not writable/);
+  await assert.rejects(
+    exec("/bin/sh", ["container/start.sh"], {
+      env: { ...env, PI_CODING_AGENT_DIR: join(root, "missing") },
+    }),
+    /volume is not writable/,
+  );
 });

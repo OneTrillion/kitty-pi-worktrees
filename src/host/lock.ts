@@ -17,29 +17,49 @@ export class WorktreeBusyError extends Error {
  * inherited fd, then exits; the parent retains the lock until its fd is closed.
  * No helper daemon, PID file, native npm addon, or stale-lock recovery is needed.
  */
-export async function acquireWorktreeLock(runtimeRoot: string, worktreePath: string): Promise<{
+export const acquireWorktreeLock = async (
+  runtimeRoot: string,
+  worktreePath: string,
+): Promise<{
   canonicalPath: string;
   release: () => Promise<void>;
-}> {
-  if (process.platform !== "linux") throw new Error("Worktree locking currently requires Linux and util-linux /usr/bin/flock");
+}> => {
+  if (process.platform !== "linux")
+    throw new Error("Worktree locking currently requires Linux and util-linux /usr/bin/flock");
   await assertPrivateRuntimeRoot(runtimeRoot);
   const canonicalPath = await realpath(worktreePath);
   if (!(await stat(canonicalPath)).isDirectory()) throw new Error("Worktree must be a directory");
   const lockPath = join(runtimeRoot, `${worktreeId(canonicalPath)}.lock`);
-  const file = await open(lockPath, constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW | constants.O_NONBLOCK, 0o600);
+  const file = await open(
+    lockPath,
+    constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    0o600,
+  );
   try {
     const info = await file.stat();
-    if (!info.isFile() || info.nlink !== 1 || info.uid !== process.getuid!() || (info.mode & 0o777) !== 0o600) {
+    if (
+      !info.isFile() ||
+      info.nlink !== 1 ||
+      info.uid !== process.getuid?.() ||
+      (info.mode & 0o777) !== 0o600
+    ) {
       throw new Error("Lock must be a user-owned regular file with mode 0600 and no hard links");
     }
     await new Promise<void>((resolve, reject) => {
-      const child = spawn("/usr/bin/flock", ["--exclusive", "--nonblock", "--conflict-exit-code", "73", "3"], {
-        cwd: runtimeRoot,
-        env: { PATH: "/usr/bin:/bin", LANG: "C" },
-        stdio: ["ignore", "ignore", "ignore", file.fd],
-      });
+      const child = spawn(
+        "/usr/bin/flock",
+        ["--exclusive", "--nonblock", "--conflict-exit-code", "73", "3"],
+        {
+          cwd: runtimeRoot,
+          env: { PATH: "/usr/bin:/bin", LANG: "C" },
+          stdio: ["ignore", "ignore", "ignore", file.fd],
+        },
+      );
       const timer = setTimeout(() => child.kill("SIGKILL"), 5000);
-      child.once("error", (error) => { clearTimeout(timer); reject(error); });
+      child.once("error", (error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
       child.once("close", (code) => {
         clearTimeout(timer);
         if (code === 0) resolve();
@@ -54,12 +74,12 @@ export async function acquireWorktreeLock(runtimeRoot: string, worktreePath: str
   let released: Promise<void> | undefined;
   return {
     canonicalPath,
-    release: () => released ??= file.close(),
+    release: () => (released ??= file.close()),
   };
-}
+};
 
-/** A live snapshot for future listing; it does not reserve an open/closed state. */
-export async function isWorktreeOpen(runtimeRoot: string, worktreePath: string): Promise<boolean> {
+/** A live snapshot, not a reservation of open/closed state. */
+export const isWorktreeOpen = async (runtimeRoot: string, worktreePath: string): Promise<boolean> => {
   try {
     const lock = await acquireWorktreeLock(runtimeRoot, worktreePath);
     await lock.release();
@@ -68,4 +88,4 @@ export async function isWorktreeOpen(runtimeRoot: string, worktreePath: string):
     if (error instanceof WorktreeBusyError) return true;
     throw error;
   }
-}
+};

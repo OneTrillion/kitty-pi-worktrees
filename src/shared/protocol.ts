@@ -21,7 +21,13 @@ export const RequestSchema = z.discriminatedUnion("op", [
 export type Request = z.infer<typeof RequestSchema>;
 
 export const WorktreeStatusSchema = z.enum([
-  "conflict", "dirty", "upstream-gone", "merged", "needs-sync", "ahead", "clean",
+  "conflict",
+  "dirty",
+  "upstream-gone",
+  "merged",
+  "needs-sync",
+  "ahead",
+  "clean",
 ]);
 export type WorktreeStatus = z.infer<typeof WorktreeStatusSchema>;
 
@@ -37,7 +43,10 @@ const commonWorktreeFields = {
   id: worktreeId,
   path: text.min(1).startsWith("/"),
   branch: text.min(1).nullable(), // null for detached HEAD
-  head: z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/).nullable(),
+  head: z
+    .string()
+    .regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/)
+    .nullable(),
   upstream: upstream.nullable(),
   open: z.boolean(), // runtime lock, independent of Git status
   locked: z.boolean(), // Git administrative worktree lock
@@ -85,8 +94,14 @@ export const ResponseSchema = z.union([
     ok: z.literal(false),
     error: z.strictObject({
       code: z.enum([
-        "invalid-request", "not-found", "git-error", "path-collision",
-        "kitty-error", "unavailable", "internal-error", "response-too-large",
+        "invalid-request",
+        "not-found",
+        "git-error",
+        "path-collision",
+        "kitty-error",
+        "unavailable",
+        "internal-error",
+        "response-too-large",
       ]),
       message: text.min(1),
     }),

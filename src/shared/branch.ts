@@ -1,7 +1,7 @@
 export const MAX_BRANCH_BYTES = 1024;
 
 /** Protocol policy: Git branch syntax minus shell metacharacters. Never normalize. */
-export function branchNameError(name: string): string | undefined {
+export const branchNameError = (name: string): string | undefined => {
   if (name.length === 0 || Buffer.byteLength(name, "utf8") > MAX_BRANCH_BYTES) {
     return `Branch name must contain 1–${MAX_BRANCH_BYTES} UTF-8 bytes`;
   }
@@ -21,9 +21,9 @@ export function branchNameError(name: string): string | undefined {
     return "Branch components must be nonempty, not start with '.', and not end with '.lock'";
   }
   return undefined;
-}
+};
 
-export function assertBranchName(name: string): void {
+export const assertBranchName = (name: string): void => {
   const error = branchNameError(name);
   if (error) throw new Error(error);
-}
+};

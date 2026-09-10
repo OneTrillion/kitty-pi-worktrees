@@ -10,10 +10,21 @@ export const requests: Request[] = [
   { version: 1, op: "inspect", worktreeId: id },
 ];
 const worktree: Worktree = {
-  id, path: "/repo/tasks/payments", branch: "feature/payments", head: "b".repeat(40),
+  id,
+  path: "/repo/tasks/payments",
+  branch: "feature/payments",
+  head: "b".repeat(40),
   upstream: { ref: "refs/heads/main", kind: "local", exists: true },
-  open: false, locked: false, lockReason: null, prunable: false, pruneReason: null,
-  inspection: "ok", status: "ahead", dirty: false, conflicts: false, operation: null,
+  open: false,
+  locked: false,
+  lockReason: null,
+  prunable: false,
+  pruneReason: null,
+  inspection: "ok",
+  status: "ahead",
+  dirty: false,
+  conflicts: false,
+  operation: null,
 };
 
 test("all four request operations round trip without coercion", () => {
@@ -22,19 +33,43 @@ test("all four request operations round trip without coercion", () => {
 
 test("reject unknown or capability-expanding request fields on every operation", () => {
   for (const request of requests) {
-    for (const key of ["path", "cwd", "command", "args", "image", "mounts", "dockerArgs", "kittyTarget", "tabId", "sourceBranch", "__proto__"]) {
+    for (const key of [
+      "path",
+      "cwd",
+      "command",
+      "args",
+      "image",
+      "mounts",
+      "dockerArgs",
+      "kittyTarget",
+      "tabId",
+      "sourceBranch",
+      "__proto__",
+    ]) {
       assert.equal(RequestSchema.safeParse({ ...request, [key]: "untrusted" }).success, false, key);
     }
   }
 });
 
 test("reject missing fields, wrong types, versions, operations and nonopaque identities", () => {
-  for (const value of [null, [], "list", {}, { version: "1", op: "list" },
-    { version: 2, op: "list" }, { version: 1, op: "exec" },
-    { version: 1, op: "create-or-open" }, { version: 1, op: "create-or-open", branch: 42 },
+  for (const value of [
+    null,
+    [],
+    "list",
+    {},
+    { version: "1", op: "list" },
+    { version: 2, op: "list" },
+    { version: 1, op: "exec" },
+    { version: 1, op: "create-or-open" },
+    { version: 1, op: "create-or-open", branch: 42 },
     { version: 1, op: "create-or-open", branch: "x;id" },
-    ...["/tmp/path", "../path", "main", "g".repeat(64), "a".repeat(63)].map((worktreeId) => ({ version: 1, op: "open", worktreeId })),
-  ]) assert.equal(RequestSchema.safeParse(value).success, false, JSON.stringify(value));
+    ...["/tmp/path", "../path", "main", "g".repeat(64), "a".repeat(63)].map((worktreeId) => ({
+      version: 1,
+      op: "open",
+      worktreeId,
+    })),
+  ])
+    assert.equal(RequestSchema.safeParse(value).success, false, JSON.stringify(value));
 });
 
 test("strict successful and error responses", () => {
@@ -49,18 +84,42 @@ test("strict successful and error responses", () => {
     assert.deepEqual(ResponseSchema.parse(response), response);
     assert.equal(ResponseSchema.safeParse({ ...response, extra: true }).success, false);
   }
-  assert.equal(ResponseSchema.safeParse({ version: 1, ok: true, op: "open", outcome: "created", worktree }).success, false);
-  assert.equal(ResponseSchema.safeParse({ version: 1, ok: false, error: { code: "git-error", message: "x", command: "id" } }).success, false);
+  assert.equal(
+    ResponseSchema.safeParse({ version: 1, ok: true, op: "open", outcome: "created", worktree }).success,
+    false,
+  );
+  assert.equal(
+    ResponseSchema.safeParse({
+      version: 1,
+      ok: false,
+      error: { code: "git-error", message: "x", command: "id" },
+    }).success,
+    false,
+  );
 });
 
 test("unavailable entries cannot claim a clean status; nested data is strict", () => {
-  const { status: _status, dirty: _dirty, conflicts: _conflicts, operation: _operation, ...common } = worktree;
-  const unavailable = { ...common, inspection: "unavailable", error: "Worktree directory is missing", prunable: true };
+  const {
+    status: _status,
+    dirty: _dirty,
+    conflicts: _conflicts,
+    operation: _operation,
+    ...common
+  } = worktree;
+  const unavailable = {
+    ...common,
+    inspection: "unavailable",
+    error: "Worktree directory is missing",
+    prunable: true,
+  };
   const response = (item: unknown) => ({ version: 1, ok: true, op: "inspect", worktree: item });
   assert.equal(ResponseSchema.safeParse(response(unavailable)).success, true);
   for (const item of [
-    { ...unavailable, status: "clean" }, { ...worktree, status: "done" },
-    { ...worktree, path: "../repo" }, { ...worktree, dirty: "false" },
+    { ...unavailable, status: "clean" },
+    { ...worktree, status: "done" },
+    { ...worktree, path: "../repo" },
+    { ...worktree, dirty: "false" },
     { ...worktree, upstream: { ...worktree.upstream, command: "id" } },
-  ]) assert.equal(ResponseSchema.safeParse(response(item)).success, false);
+  ])
+    assert.equal(ResponseSchema.safeParse(response(item)).success, false);
 });

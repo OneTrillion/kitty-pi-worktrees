@@ -55,7 +55,7 @@ Success: `{ "version": 1, "ok": true, "op": <matching operation>, ... }`.
 The client must verify the successful response operation matches its request. Errors have no operation because a malformed request may not identify one:
 
 ```json
-{"version":1,"ok":false,"error":{"code":"git-error","message":"Concise explanation"}}
+{ "version": 1, "ok": false, "error": { "code": "git-error", "message": "Concise explanation" } }
 ```
 
 A worktree includes path, nullable branch/HEAD/upstream, independent runtime `open` and Git `locked` flags, and prunable/lock reasons. An `inspection: "ok"` record includes Git status, dirty/conflict flags, and merge/rebase state. An `inspection: "unavailable"` record includes an error instead, never an invented clean status. Upstream records distinguish local versus remote and whether the configured ref resolves. SHA-1 and SHA-256 commit IDs are supported.

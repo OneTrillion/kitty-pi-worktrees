@@ -59,14 +59,14 @@ git -C /home/alice/projects/shop config user.email 'alice@example.com'
 
 All commands require `--config /absolute/path/to/host.json`:
 
-| Command | Scope |
-| --- | --- |
-| `inspect` | From the selected worktree/subdirectory: print Git location, branch and HEAD; no Docker, lock or mutation |
-| `start` | From the selected worktree: run Pi attached in **this terminal**; TTY and non-root UID/GID required |
-| `list [--json]` | Use configured repository regardless of cwd; live Git status via isolated Docker helpers |
-| `open <branch-or-ID-prefix>` | Use configured repository; open one existing worktree in a **new** Kitty tab |
-| `recover` | From selected worktree: explicitly stop/remove its verified leftover task container |
-| `recover-git` | Use configured repository: explicitly stop/remove a verified orphan Git helper |
+| Command                      | Scope                                                                                                     |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `inspect`                    | From the selected worktree/subdirectory: print Git location, branch and HEAD; no Docker, lock or mutation |
+| `start`                      | From the selected worktree: run Pi attached in **this terminal**; TTY and non-root UID/GID required       |
+| `list [--json]`              | Use configured repository regardless of cwd; live Git status via isolated Docker helpers                  |
+| `open <branch-or-ID-prefix>` | Use configured repository; open one existing worktree in a **new** Kitty tab                              |
+| `recover`                    | From selected worktree: explicitly stop/remove its verified leftover task container                       |
+| `recover-git`                | Use configured repository: explicitly stop/remove a verified orphan Git helper                            |
 
 An alias after installing/testing the release:
 

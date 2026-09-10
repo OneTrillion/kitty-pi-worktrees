@@ -7,16 +7,20 @@ import { createRuntimeDirectory } from "./runtime.ts";
 type Handler = (request: Request, signal: AbortSignal) => Response | Promise<Response>;
 type ErrorCode = Extract<Response, { ok: false }>["error"]["code"];
 
-function failure(code: ErrorCode, message: string): Response {
+const failure = (code: ErrorCode, message: string): Response => {
   return { version: PROTOCOL_VERSION, ok: false, error: { code, message } };
-}
+};
 
 /** Only transport here. Git/Docker/Kitty operations must live in a trusted handler. */
-export async function startRequestServer(runtimeRoot: string, handler: Handler, frameTimeoutMs = 5000): Promise<{
+export const startRequestServer = async (
+  runtimeRoot: string,
+  handler: Handler,
+  frameTimeoutMs = 5000,
+): Promise<{
   socketPath: string;
   close: () => Promise<void>;
   failure: Promise<Error>;
-}> {
+}> => {
   if (!Number.isSafeInteger(frameTimeoutMs) || frameTimeoutMs < 1) throw new Error("Invalid frame timeout");
   const runtime = await createRuntimeDirectory(runtimeRoot);
   const connections = new Map<Socket, AbortController>();
@@ -25,9 +29,14 @@ export async function startRequestServer(runtimeRoot: string, handler: Handler, 
   let closePromise: Promise<void> | undefined;
   let reportFailure: (error: Error) => void;
   // Resolves (does not reject) so an early server failure cannot cause an unhandled rejection.
-  const failed = new Promise<Error>((resolve) => { reportFailure = resolve; });
+  const failed = new Promise<Error>((resolve) => {
+    reportFailure = resolve;
+  });
   const server = createServer({ allowHalfOpen: true }, (socket) => {
-    if (closing) { socket.destroy(); return; }
+    if (closing) {
+      socket.destroy();
+      return;
+    }
     const controller = new AbortController();
     connections.set(socket, controller);
     const decoder = new FrameDecoder(MAX_REQUEST_BYTES);
@@ -40,9 +49,11 @@ export async function startRequestServer(runtimeRoot: string, handler: Handler, 
       try {
         frame = encodeResponse(response);
       } catch (error) {
-        frame = encodeResponse(error instanceof FrameSizeError
-          ? failure("response-too-large", "Response exceeds the protocol size limit")
-          : failure("internal-error", "Supervisor produced an invalid response"));
+        frame = encodeResponse(
+          error instanceof FrameSizeError
+            ? failure("response-too-large", "Response exceeds the protocol size limit")
+            : failure("internal-error", "Supervisor produced an invalid response"),
+        );
       }
       clearTimeout(timer);
       timer = setTimeout(() => socket.destroy(), frameTimeoutMs);
@@ -56,8 +67,9 @@ export async function startRequestServer(runtimeRoot: string, handler: Handler, 
     });
     socket.on("data", (chunk: Buffer) => {
       if (received || closing) return;
-      try { decoder.push(chunk); }
-      catch {
+      try {
+        decoder.push(chunk);
+      } catch {
         received = true;
         reply(failure("invalid-request", "Invalid supervisor request frame"));
       }
@@ -67,8 +79,12 @@ export async function startRequestServer(runtimeRoot: string, handler: Handler, 
       received = true;
       clearTimeout(timer);
       let request: Request;
-      try { request = decodeRequest(decoder); }
-      catch { reply(failure("invalid-request", "Invalid supervisor request")); return; }
+      try {
+        request = decodeRequest(decoder);
+      } catch {
+        reply(failure("invalid-request", "Invalid supervisor request"));
+        return;
+      }
       const job = (async () => {
         try {
           const response = await handler(request, controller.signal);
@@ -90,8 +106,8 @@ export async function startRequestServer(runtimeRoot: string, handler: Handler, 
     });
   });
 
-  function close(): Promise<void> {
-    return closePromise ??= (async () => {
+  const close = (): Promise<void> => {
+    return (closePromise ??= (async () => {
       closing = true;
       const stopped = new Promise<void>((resolve) => server.close(() => resolve()));
       for (const [socket, controller] of connections) {
@@ -102,8 +118,8 @@ export async function startRequestServer(runtimeRoot: string, handler: Handler, 
       // A handler must honor its signal; do not release locks while host work is still running.
       await Promise.allSettled(pending);
       await runtime.remove();
-    })();
-  }
+    })());
+  };
 
   try {
     await new Promise<void>((resolve, reject) => {
@@ -124,4 +140,4 @@ export async function startRequestServer(runtimeRoot: string, handler: Handler, 
     throw error;
   }
   return { socketPath: runtime.socketPath, close, failure: failed };
-}
+};

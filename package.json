@@ -3,18 +3,25 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=24.0.0" },
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit",
     "test": "node --test test/*.test.ts",
     "smoke:docker": "node --test test/docker-smoke.ts",
-    "check": "npm run typecheck && npm test && npm run build && node --test test/compiled-smoke.ts"
+    "check": "npm run format:check && npm run typecheck && npm test && npm run build && node --test test/compiled-smoke.ts"
   },
-  "dependencies": { "zod": "4.1.12" },
+  "dependencies": {
+    "zod": "4.1.12"
+  },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "0.84.4",
     "@types/node": "24.13.3",
+    "prettier": "3.6.2",
     "typescript": "5.9.3"
   }
 }

@@ -6,8 +6,67 @@ import { validateBranchName } from "../src/host/branch.ts";
 import { deriveWorktreePath, worktreeDirectoryName, worktreeId } from "../src/host/paths.ts";
 import { branchNameError, MAX_BRANCH_BYTES } from "../src/shared/branch.ts";
 
-const valid = ["main", "feature/payments", "feature/payments/docs", "v1.2", "task_1", "fix+api", "user@task", "a=b", "a,b", "a]b", "café/修正", "a/-b", "a./b"];
-const invalid = ["", "HEAD", "@", "-option", "/tmp/pwn", "../task", "a/../b", "a..b", "a//b", "a/", ".hidden", "a/.hidden", "a.lock", "a.lock/b", "a.", "@{-1}", "a b", "a\nb", "a\0b", "a\u001bb", "a\u007fb", "a\u202eb", "a\u00a0b", "x~1", "x^", "x:y", "x?y", "x*y", "x[y", "x\\y", "x;id", "$(id)", "x`id`", "x|id", "x&y", "x>y", "x<y", "x'y", 'x"y', "x(y)", "x{y}", "x!y", "x#y", "\ud800"];
+const valid = [
+  "main",
+  "feature/payments",
+  "feature/payments/docs",
+  "v1.2",
+  "task_1",
+  "fix+api",
+  "user@task",
+  "a=b",
+  "a,b",
+  "a]b",
+  "café/修正",
+  "a/-b",
+  "a./b",
+];
+const invalid = [
+  "",
+  "HEAD",
+  "@",
+  "-option",
+  "/tmp/pwn",
+  "../task",
+  "a/../b",
+  "a..b",
+  "a//b",
+  "a/",
+  ".hidden",
+  "a/.hidden",
+  "a.lock",
+  "a.lock/b",
+  "a.",
+  "@{-1}",
+  "a b",
+  "a\nb",
+  "a\0b",
+  "a\u001bb",
+  "a\u007fb",
+  "a\u202eb",
+  "a\u00a0b",
+  "x~1",
+  "x^",
+  "x:y",
+  "x?y",
+  "x*y",
+  "x[y",
+  "x\\y",
+  "x;id",
+  "$(id)",
+  "x`id`",
+  "x|id",
+  "x&y",
+  "x>y",
+  "x<y",
+  "x'y",
+  'x"y',
+  "x(y)",
+  "x{y}",
+  "x!y",
+  "x#y",
+  "\ud800",
+];
 
 for (const name of valid) {
   test(`accept literal branch ${name}`, async () => {
@@ -43,7 +102,16 @@ test("directory names are bounded, deterministic and confined lexically to the t
 });
 
 test("slug collisions, case differences, Unicode normalization and truncated prefixes remain distinct", () => {
-  const names = ["a/b", "a-b", "a+b", "A/B", "café", "cafe\u0301", `${"a".repeat(100)}/one`, `${"a".repeat(100)}/two`];
+  const names = [
+    "a/b",
+    "a-b",
+    "a+b",
+    "A/B",
+    "café",
+    "cafe\u0301",
+    `${"a".repeat(100)}/one`,
+    `${"a".repeat(100)}/two`,
+  ];
   assert.equal(new Set(names.map(worktreeDirectoryName)).size, names.length);
 });
 

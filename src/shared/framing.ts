@@ -1,8 +1,13 @@
 import { TextDecoder } from "node:util";
 import {
-  MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, RequestSchema, ResponseSchema,
-  type Request, type Response,
+  MAX_REQUEST_BYTES,
+  MAX_RESPONSE_BYTES,
+  RequestSchema,
+  ResponseSchema,
+  type Request,
+  type Response,
 } from "./protocol.ts";
+import { parseJson } from "./validation.ts";
 
 export class FrameSizeError extends Error {
   constructor() {
@@ -12,22 +17,22 @@ export class FrameSizeError extends Error {
 }
 
 /** A connection carries exactly one frame: uint32 BE length, then UTF-8 JSON. */
-function encode(value: unknown, maxBytes: number): Buffer {
+const encode = (value: unknown, maxBytes: number): Buffer => {
   const body = Buffer.from(JSON.stringify(value), "utf8");
   if (body.length === 0 || body.length > maxBytes) throw new FrameSizeError();
   const frame = Buffer.allocUnsafe(4 + body.length);
   frame.writeUInt32BE(body.length);
   body.copy(frame, 4);
   return frame;
-}
+};
 
-export function encodeRequest(request: Request): Buffer {
+export const encodeRequest = (request: unknown): Buffer => {
   return encode(RequestSchema.parse(request), MAX_REQUEST_BYTES);
-}
+};
 
-export function encodeResponse(response: Response): Buffer {
+export const encodeResponse = (response: unknown): Buffer => {
   return encode(ResponseSchema.parse(response), MAX_RESPONSE_BYTES);
-}
+};
 
 /**
  * Bounded single-message decoder. Call finish() at EOF, before dispatching.
@@ -65,7 +70,8 @@ export class FrameDecoder {
         if (length === 0 || length > this.maxBytes) throw new Error("Invalid frame length");
         this.body = Buffer.allocUnsafe(length);
       }
-      const body = this.body!;
+      const body = this.body;
+      if (!body) throw new Error("Incomplete frame header");
       const count = chunk.length - offset;
       if (count > body.length - this.bodyBytes) throw new Error("Trailing data after frame");
       chunk.copy(body, this.bodyBytes, offset);
@@ -81,14 +87,14 @@ export class FrameDecoder {
     this.finished = true;
     if (!this.body || this.bodyBytes !== this.body.length) throw new Error("Incomplete frame");
     const json = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(this.body);
-    return JSON.parse(json) as unknown;
+    return parseJson(json);
   }
 }
 
-export function decodeRequest(decoder: FrameDecoder): Request {
+export const decodeRequest = (decoder: FrameDecoder): Request => {
   return RequestSchema.parse(decoder.finish());
-}
+};
 
-export function decodeResponse(decoder: FrameDecoder): Response {
+export const decodeResponse = (decoder: FrameDecoder): Response => {
   return ResponseSchema.parse(decoder.finish());
-}
+};

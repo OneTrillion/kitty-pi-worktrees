@@ -2,36 +2,45 @@ import assert from "node:assert/strict";
 import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
-import { createWorktreeService } from "../src/host/worktrees.ts";
-import { acquireWorktreeLock } from "../src/host/lock.ts";
-import { createRuntimeDirectory, prepareRuntimeRoot } from "../src/host/runtime.ts";
-import { deriveWorktreePath, worktreeId } from "../src/host/paths.ts";
 import { gitHelperArgs } from "../src/host/git-helper.ts";
+import { acquireWorktreeLock } from "../src/host/lock.ts";
+import { deriveWorktreePath, worktreeId } from "../src/host/paths.ts";
+import { createRuntimeDirectory, prepareRuntimeRoot } from "../src/host/runtime.ts";
+import { createWorktreeService } from "../src/host/worktrees.ts";
 import { ResponseSchema } from "../src/shared/protocol.ts";
 import { setupDocker } from "./fixtures/docker.ts";
 import { git } from "./fixtures/git.ts";
 
-async function setup(t: Parameters<typeof setupDocker>[0]) {
+const setup = async (t: Parameters<typeof setupDocker>[0]) => {
   const fixture = await setupDocker(t);
   await prepareRuntimeRoot(fixture.config.runtimeRoot);
   const control = await createRuntimeDirectory(fixture.config.runtimeRoot);
   const client = await fixture.factory(fixture.config, control.directory);
   const locks: Array<Awaited<ReturnType<typeof acquireWorktreeLock>>> = [];
   const launches: string[] = [];
-  const makeService = (source = fixture.config.repositoryPath) => createWorktreeService(fixture.config, source, client, {
-    user: { uid: 1000, gid: 1000 },
-    launch: async (path) => { launches.push(path); locks.push(await acquireWorktreeLock(fixture.config.runtimeRoot, path)); },
+  const makeService = (source = fixture.config.repositoryPath) =>
+    createWorktreeService(fixture.config, source, client, {
+      user: { uid: 1000, gid: 1000 },
+      launch: async (path) => {
+        launches.push(path);
+        locks.push(await acquireWorktreeLock(fixture.config.runtimeRoot, path));
+      },
+    });
+  t.after(async () => {
+    for (const lock of locks) await lock.release();
+    await control.remove();
   });
-  t.after(async () => { for (const lock of locks) await lock.release(); await control.remove(); });
   return { ...fixture, launches, locks, makeService, client };
-}
+};
 
 test("real Git worker creates feature/nested tasks, records local parents and never copies dirty source files", async (t) => {
   const fixture = await setup(t);
   const repo = fixture.config.repositoryPath;
   await git(repo, ["branch", "-m", "feature/payments"]);
   await writeFile(join(repo, "file.txt"), "uncommitted source only\n");
-  const created = await fixture.makeService().handle({ version: 1, op: "create-or-open", branch: "feature/task" });
+  const created = await fixture
+    .makeService()
+    .handle({ version: 1, op: "create-or-open", branch: "feature/task" });
   ResponseSchema.parse(created);
   assert.equal(created.ok, true);
   if (!created.ok || created.op !== "create-or-open") return;
@@ -39,9 +48,12 @@ test("real Git worker creates feature/nested tasks, records local parents and ne
   assert.equal(created.worktree.open, true);
   assert.equal(created.worktree.upstream?.ref, "refs/heads/feature/payments");
   assert.equal(await readFile(join(created.worktree.path, "file.txt"), "utf8"), "initial\n");
-  const nested = await fixture.makeService(created.worktree.path).handle({ version: 1, op: "create-or-open", branch: "task/docs" });
+  const nested = await fixture
+    .makeService(created.worktree.path)
+    .handle({ version: 1, op: "create-or-open", branch: "task/docs" });
   assert.equal(nested.ok, true);
-  if (nested.ok && nested.op === "create-or-open") assert.equal(nested.worktree.upstream?.ref, "refs/heads/feature/task");
+  if (nested.ok && nested.op === "create-or-open")
+    assert.equal(nested.worktree.upstream?.ref, "refs/heads/feature/task");
   assert.equal(fixture.launches.length, 2);
 });
 
@@ -67,7 +79,9 @@ test("closed worktrees reopen, active ones are reported without another Kitty la
 test("concurrent duplicate creation requests create one worktree and launch one tab", async (t) => {
   const fixture = await setup(t);
   const service = fixture.makeService();
-  const replies = await Promise.all([1, 2].map(() => service.handle({ version: 1, op: "create-or-open", branch: "task" })));
+  const replies = await Promise.all(
+    [1, 2].map(() => service.handle({ version: 1, op: "create-or-open", branch: "task" })),
+  );
   assert.ok(replies.every((reply) => reply.ok));
   assert.equal(fixture.launches.length, 1);
   assert.equal((await readdir(fixture.config.worktreeRoot)).length, 1);
@@ -103,7 +117,8 @@ test("path collisions and invalid names preserve files and do not call Kitty", a
   const service = fixture.makeService();
   const collision = await service.handle({ version: 1, op: "create-or-open", branch: "collision" });
   assert.ok(!collision.ok && collision.error.code === "path-collision");
-  for (const branch of ["../escape", "a;id", "/tmp/path", "@{-1}"]) assert.equal((await service.handle({ version: 1, op: "create-or-open", branch })).ok, false);
+  for (const branch of ["../escape", "a;id", "/tmp/path", "@{-1}"])
+    assert.equal((await service.handle({ version: 1, op: "create-or-open", branch })).ok, false);
   assert.equal(await readFile(join(path, "keep"), "utf8"), "do not overwrite");
   assert.equal(fixture.launches.length, 0);
 });
@@ -111,7 +126,10 @@ test("path collisions and invalid names preserve files and do not call Kitty", a
 test("Kitty failure preserves newly created worktree and its local upstream", async (t) => {
   const fixture = await setup(t);
   const service = createWorktreeService(fixture.config, fixture.config.repositoryPath, fixture.client, {
-    user: { uid: 1000, gid: 1000 }, launch: async () => { throw new Error("Kitty unavailable"); },
+    user: { uid: 1000, gid: 1000 },
+    launch: async () => {
+      throw new Error("Kitty unavailable");
+    },
   });
   const result = await service.handle({ version: 1, op: "create-or-open", branch: "task" });
   assert.ok(!result.ok && result.error.code === "kitty-error");
@@ -123,7 +141,11 @@ test("unconfirmed Kitty handoff reports uncertainty and preserves the new worktr
   const fixture = await setup(t);
   let launches = 0;
   const service = createWorktreeService(fixture.config, fixture.config.repositoryPath, fixture.client, {
-    user: { uid: 1000, gid: 1000 }, launch: async () => { launches++; }, startupTimeoutMs: 1,
+    user: { uid: 1000, gid: 1000 },
+    launch: async () => {
+      launches++;
+    },
+    startupTimeoutMs: 1,
   });
   const result = await service.handle({ version: 1, op: "create-or-open", branch: "task" });
   assert.ok(!result.ok && result.error.code === "unavailable");
@@ -138,11 +160,23 @@ test("helper mount arguments expose no credentials, host API sockets or task-roo
   const { config } = await setup(t);
   const common = join(config.repositoryPath, ".git");
   const destination = deriveWorktreePath(config.worktreeRoot, "task");
-  const args = gitHelperArgs(config, { op: "create", branch: "task", destination,
-    source: { branch: "main", head: "a".repeat(40) }, location: { worktreePath: config.repositoryPath, gitDir: common, commonGitDir: common } },
-  "12345678-1234-1234-1234-123456789abc", { uid: 1000, gid: 1000 });
-  const mounts = args.flatMap((value, i) => value === "--mount" ? [args[i + 1]!] : []);
-  assert.deepEqual(mounts, [`type=bind,src=${destination},dst=${destination}`, `type=bind,src=${common},dst=${common}`]);
+  const args = gitHelperArgs(
+    config,
+    {
+      op: "create",
+      branch: "task",
+      destination,
+      source: { branch: "main", head: "a".repeat(40) },
+      location: { worktreePath: config.repositoryPath, gitDir: common, commonGitDir: common },
+    },
+    "12345678-1234-1234-1234-123456789abc",
+    { uid: 1000, gid: 1000 },
+  );
+  const mounts = args.flatMap((value, i) => (value === "--mount" ? [args[i + 1]!] : []));
+  assert.deepEqual(mounts, [
+    `type=bind,src=${destination},dst=${destination}`,
+    `type=bind,src=${common},dst=${common}`,
+  ]);
   assert.ok(args.includes("--network=none") && args.includes("--read-only"));
   assert.doesNotMatch(args.join(" "), /type=volume|PI_WORKTREE_SOCKET|docker\.sock|KITTY|\/pi\/agent/);
 });

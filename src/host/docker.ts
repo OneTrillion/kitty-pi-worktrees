@@ -1,4 +1,5 @@
 import { posix as path } from "node:path";
+import { containsPath } from "./files.ts";
 import { worktreeId } from "./paths.ts";
 
 export const AGENT_DIR = "/pi/agent";
@@ -9,9 +10,9 @@ export const REPOSITORY_LABEL = "io.pi-worktree.repository";
 export const RUN_LABEL = "io.pi-worktree.run";
 export const RUN_ID_PATTERN = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/;
 
-export function containerName(canonicalPath: string): string {
+export const containerName = (canonicalPath: string): string => {
   return `pi-worktree-${worktreeId(canonicalPath)}`;
-}
+};
 
 /** Trusted host configuration only; never deserialize this from a socket request. */
 export interface DockerConfig {
@@ -29,31 +30,47 @@ export interface DockerWorktree {
   gid: number;
 }
 
-function contains(parent: string, child: string): boolean {
-  return parent === child || child.startsWith(parent + "/");
-}
-
-function validatePath(value: string): void {
+const validatePath = (value: string): void => {
   // --mount has its own CSV grammar even without a shell. Reject rather than escape.
-  if (!path.isAbsolute(value) || value.endsWith("/") || path.normalize(value) !== value || /[,"\p{Cc}\p{Cf}]/u.test(value)) {
+  if (
+    !path.isAbsolute(value) ||
+    value.endsWith("/") ||
+    path.normalize(value) !== value ||
+    /[,"\p{Cc}\p{Cf}]/u.test(value)
+  ) {
     throw new Error("Mount paths must be normalized absolute POSIX paths without commas, quotes or controls");
   }
-}
+};
 
-export function validateDirectoryMount(value: string): void {
+export const validateDirectoryMount = (value: string): void => {
   validatePath(value);
-  const reserved = ["/opt", "/pi", "/run", "/var/run", "/bin", "/sbin", "/lib", "/lib64", "/usr", "/etc", "/proc", "/sys", "/dev", "/tmp/pi-home"];
-  if (value === "/" || reserved.some((dir) => contains(value, dir) || contains(dir, value))) {
+  const reserved = [
+    "/opt",
+    "/pi",
+    "/run",
+    "/var/run",
+    "/bin",
+    "/sbin",
+    "/lib",
+    "/lib64",
+    "/usr",
+    "/etc",
+    "/proc",
+    "/sys",
+    "/dev",
+    "/tmp/pi-home",
+  ];
+  if (value === "/" || reserved.some((dir) => containsPath(value, dir) || containsPath(dir, value))) {
     throw new Error("Worktree/Git mount overlaps a reserved container path");
   }
-}
+};
 
-export function sessionDirectory(canonicalWorktreePath: string): string {
+export const sessionDirectory = (canonicalWorktreePath: string): string => {
   return `${AGENT_DIR}/sessions/${worktreeId(canonicalWorktreePath)}`;
-}
+};
 
 /** Pure argv builder. No Docker execution, environment forwarding or project configuration. */
-export function dockerRunArgs(config: DockerConfig, worktree: DockerWorktree): string[] {
+const taskArgs = (config: DockerConfig, worktree: DockerWorktree): string[] => {
   if (!config.image || config.image.startsWith("-") || /[\s\p{Cc}\p{Cf}]/u.test(config.image)) {
     throw new Error("A fixed image name is required");
   }
@@ -71,51 +88,81 @@ export function dockerRunArgs(config: DockerConfig, worktree: DockerWorktree): s
   validatePath(worktree.socketPath);
   const gitDir = worktree.gitDir ?? worktree.commonGitDir;
   validatePath(gitDir);
-  if (!contains(worktree.commonGitDir, gitDir)) throw new Error("Git metadata must be inside the common Git directory");
-  if (contains(worktree.commonGitDir, worktree.worktreePath)) {
+  if (!containsPath(worktree.commonGitDir, gitDir))
+    throw new Error("Git metadata must be inside the common Git directory");
+  if (containsPath(worktree.commonGitDir, worktree.worktreePath)) {
     throw new Error("A worktree cannot be inside its common Git directory");
   }
-  if (contains(worktree.worktreePath, worktree.socketPath) || contains(worktree.commonGitDir, worktree.socketPath)) {
+  if (
+    containsPath(worktree.worktreePath, worktree.socketPath) ||
+    containsPath(worktree.commonGitDir, worktree.socketPath)
+  ) {
     throw new Error("The private socket must be outside container-writable directories");
   }
 
-  const args = [
-    "run", "--rm", "--interactive", "--tty", "--init",
-    "--name", containerName(worktree.worktreePath),
-    "--user", `${worktree.uid}:${worktree.gid}`,
-    "--cap-drop=ALL", "--security-opt=no-new-privileges",
-    "--workdir", worktree.worktreePath,
-    "--env", `PI_CODING_AGENT_DIR=${AGENT_DIR}`,
-    "--env", `PI_WORKTREE_SOCKET=${SUPERVISOR_SOCKET}`,
-    "--env", `PI_WORKTREE_ROOT=${worktree.worktreePath}`,
-    "--env", `PI_WORKTREE_GIT_DIR=${gitDir}`,
-    "--env", `PI_WORKTREE_COMMON_GIT_DIR=${worktree.commonGitDir}`,
-    "--env", "HOME=/tmp/pi-home",
-    "--env", "TERM=xterm-256color",
-    "--mount", `type=bind,src=${worktree.worktreePath},dst=${worktree.worktreePath}`,
-  ];
-  // Always bind the common Git directory, even inside the main worktree.
-  // As a mount point it cannot be renamed/replaced by that container. Skipping
-  // this "redundant" mount would let it redirect later host binds via a symlink.
-  args.push("--mount", `type=bind,src=${worktree.commonGitDir},dst=${worktree.commonGitDir}`);
-  args.push(
-    "--mount", `type=volume,src=${config.agentVolume},dst=${AGENT_DIR}`,
-    "--mount", `type=bind,src=${worktree.socketPath},dst=${SUPERVISOR_SOCKET},readonly`,
+  return [
+    "--interactive",
+    "--tty",
+    "--init",
+    "--name",
+    containerName(worktree.worktreePath),
+    "--user",
+    `${worktree.uid}:${worktree.gid}`,
+    "--cap-drop=ALL",
+    "--security-opt=no-new-privileges",
+    "--workdir",
+    worktree.worktreePath,
+    "--env",
+    `PI_CODING_AGENT_DIR=${AGENT_DIR}`,
+    "--env",
+    `PI_WORKTREE_SOCKET=${SUPERVISOR_SOCKET}`,
+    "--env",
+    `PI_WORKTREE_ROOT=${worktree.worktreePath}`,
+    "--env",
+    `PI_WORKTREE_GIT_DIR=${gitDir}`,
+    "--env",
+    `PI_WORKTREE_COMMON_GIT_DIR=${worktree.commonGitDir}`,
+    "--env",
+    "HOME=/tmp/pi-home",
+    "--env",
+    "TERM=xterm-256color",
+    "--mount",
+    `type=bind,src=${worktree.worktreePath},dst=${worktree.worktreePath}`,
+    // A separate mount prevents the container from replacing common Git with a symlink.
+    // This is required even when .git is inside the main worktree.
+    "--mount",
+    `type=bind,src=${worktree.commonGitDir},dst=${worktree.commonGitDir}`,
+    "--mount",
+    `type=volume,src=${config.agentVolume},dst=${AGENT_DIR}`,
+    "--mount",
+    `type=bind,src=${worktree.socketPath},dst=${SUPERVISOR_SOCKET},readonly`,
     config.image,
-    "--session-dir", sessionDirectory(worktree.worktreePath),
-  );
-  return args;
-}
+    "--session-dir",
+    sessionDirectory(worktree.worktreePath),
+  ];
+};
+
+export const dockerRunArgs = (config: DockerConfig, worktree: DockerWorktree): string[] => [
+  "run",
+  "--rm",
+  ...taskArgs(config, worktree),
+];
 
 /** Create stopped first. The supervisor removes it only after verified shutdown. */
-export function dockerCreateArgs(config: DockerConfig, worktree: DockerWorktree, runId: string): string[] {
+export const dockerCreateArgs = (config: DockerConfig, worktree: DockerWorktree, runId: string): string[] => {
   if (!RUN_ID_PATTERN.test(runId)) throw new Error("Invalid host-generated run ID");
-  const args = dockerRunArgs(config, worktree);
-  // Replace only the fixed `run --rm` prefix, not values elsewhere in the argv.
-  args.splice(0, 2, "create", "--pull=never", "--restart=no",
-    "--label", `${MANAGED_LABEL}=1`,
-    "--label", `${WORKTREE_LABEL}=${worktreeId(worktree.worktreePath)}`,
-    "--label", `${REPOSITORY_LABEL}=${worktreeId(worktree.commonGitDir)}`,
-    "--label", `${RUN_LABEL}=${runId}`);
-  return args;
-}
+  return [
+    "create",
+    "--pull=never",
+    "--restart=no",
+    "--label",
+    `${MANAGED_LABEL}=1`,
+    "--label",
+    `${WORKTREE_LABEL}=${worktreeId(worktree.worktreePath)}`,
+    "--label",
+    `${REPOSITORY_LABEL}=${worktreeId(worktree.commonGitDir)}`,
+    "--label",
+    `${RUN_LABEL}=${runId}`,
+    ...taskArgs(config, worktree),
+  ];
+};
