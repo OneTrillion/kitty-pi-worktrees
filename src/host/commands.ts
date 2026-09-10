@@ -1,11 +1,12 @@
-import type { Response } from "../shared/protocol.ts";
+import { PROTOCOL_VERSION, type Response } from "../shared/protocol.ts";
 import type { HostConfig } from "./config.ts";
 import { createDockerClient } from "./docker-client.ts";
 import { listGitWorktrees } from "./git-discovery.ts";
 import { recoverGitHelper } from "./git-helper.ts";
 import { worktreeId } from "./paths.ts";
 import { createRuntimeDirectory, prepareRuntimeRoot } from "./runtime.ts";
-import { createWorktreeService, type WorktreeServiceOptions } from "./worktrees.ts";
+import type { WorktreeServiceOptions } from "./worktree-session.ts";
+import { createWorktreeService } from "./worktrees.ts";
 
 export const resolveSelection = async (config: HostConfig, selector: string): Promise<string> => {
   const records = await listGitWorktrees(config);
@@ -48,8 +49,12 @@ export const runHostCommand = async (
     });
     return await service.handle(
       command === "list"
-        ? { version: 1, op: "list" }
-        : { version: 1, op: "open", worktreeId: await resolveSelection(config, selector ?? "") },
+        ? { version: PROTOCOL_VERSION, op: "list" }
+        : {
+            version: PROTOCOL_VERSION,
+            op: "open",
+            worktreeId: await resolveSelection(config, selector ?? ""),
+          },
       controller.signal,
     );
   } finally {

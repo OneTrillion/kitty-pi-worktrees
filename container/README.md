@@ -1,6 +1,6 @@
 # Container setup
 
-The base image needs Node **24+**, Pi **0.84.4**, Git, bash and `/bin/sh`. The build verifies the versions and bundles the extension; do not use `pi install`.
+The default image includes Node **24**, the pinned Pi version, Git, bash, CA certificates and ripgrep. The build verifies versions and bundles the extension; do not use `pi install`.
 
 ## Build
 
@@ -8,19 +8,12 @@ From the repository root, as your non-root host user:
 
 ```sh
 docker build -f container/Dockerfile \
-  --build-arg PI_BASE_IMAGE=your-existing-pi-image:tag \
   --build-arg PI_UID="$(id -u)" --build-arg PI_GID="$(id -g)" \
   -t pi-worktree:local .
 docker volume create pi-agent
 ```
 
-Without an existing Pi image, build the reference base first and use `pi-worktree-base:local` above:
-
-```sh
-docker build -f container/Base.Dockerfile -t pi-worktree-base:local .
-```
-
-The reference base includes Node, Pi, Git, bash, CA certificates and ripgrep. Add project tools to your own trusted base image. Never bake credentials into an image.
+To reuse a trusted image with project tools, add `--build-arg PI_BASE_IMAGE=your-image:tag`. It must provide Node 24+, the Pi version pinned in `package.json`, Git, bash and `/bin/sh`. Never bake credentials into an image.
 
 The integration replaces the base image's entrypoint, command, user, HOME and working directory. Preserve any initialization your old image needs. UID/GID default to 1000; use your actual host IDs.
 

@@ -1,15 +1,10 @@
 import { chmod } from "node:fs/promises";
 import { createServer, type Socket } from "node:net";
 import { FrameDecoder, FrameSizeError, decodeRequest, encodeResponse } from "../shared/framing.ts";
-import { MAX_REQUEST_BYTES, PROTOCOL_VERSION, type Request, type Response } from "../shared/protocol.ts";
+import { failureResponse, MAX_REQUEST_BYTES, type Request, type Response } from "../shared/protocol.ts";
 import { createRuntimeDirectory } from "./runtime.ts";
 
 type Handler = (request: Request, signal: AbortSignal) => Response | Promise<Response>;
-type ErrorCode = Extract<Response, { ok: false }>["error"]["code"];
-
-const failure = (code: ErrorCode, message: string): Response => {
-  return { version: PROTOCOL_VERSION, ok: false, error: { code, message } };
-};
 
 /** Only transport here. Git/Docker/Kitty operations must live in a trusted handler. */
 export const startRequestServer = async (
@@ -51,8 +46,8 @@ export const startRequestServer = async (
       } catch (error) {
         frame = encodeResponse(
           error instanceof FrameSizeError
-            ? failure("response-too-large", "Response exceeds the protocol size limit")
-            : failure("internal-error", "Supervisor produced an invalid response"),
+            ? failureResponse("response-too-large", "Response exceeds the protocol size limit")
+            : failureResponse("internal-error", "Supervisor produced an invalid response"),
         );
       }
       clearTimeout(timer);
@@ -71,7 +66,7 @@ export const startRequestServer = async (
         decoder.push(chunk);
       } catch {
         received = true;
-        reply(failure("invalid-request", "Invalid supervisor request frame"));
+        reply(failureResponse("invalid-request", "Invalid supervisor request frame"));
       }
     });
     socket.on("end", () => {
@@ -82,7 +77,7 @@ export const startRequestServer = async (
       try {
         request = decodeRequest(decoder);
       } catch {
-        reply(failure("invalid-request", "Invalid supervisor request"));
+        reply(failureResponse("invalid-request", "Invalid supervisor request"));
         return;
       }
       const job = (async () => {
@@ -91,7 +86,7 @@ export const startRequestServer = async (
           if (response.ok && response.op !== request.op) throw new Error("Response operation mismatch");
           reply(response);
         } catch {
-          reply(failure("internal-error", "Supervisor request failed"));
+          reply(failureResponse("internal-error", "Supervisor request failed"));
         }
       })();
       pending.add(job);

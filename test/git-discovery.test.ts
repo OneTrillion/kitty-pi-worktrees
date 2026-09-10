@@ -1,13 +1,9 @@
 import assert from "node:assert/strict";
-
 import { mkdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
-
 import { join } from "node:path";
-
 import test from "node:test";
-
-import { discoverCurrentWorktree, parseWorktreePaths } from "../src/host/git-discovery.ts";
-
+import { discoverCurrentWorktree } from "../src/host/git-discovery.ts";
+import { parseWorktreeRecords } from "../src/shared/worktree-records.ts";
 import { git, setupGit } from "./fixtures/git.ts";
 
 test("discover a main worktree from a subdirectory or symlink cwd without modifying it", async (t) => {
@@ -75,7 +71,9 @@ test("Git-valid existing branch names are not restricted to the request-name pol
 
 test("NUL worktree porcelain is parsed without unquoting or newline splitting", () => {
   assert.deepEqual(
-    parseWorktreePaths("worktree /a b\0HEAD abc\0branch refs/heads/main\0\0worktree /a\nb\0detached\0\0"),
+    parseWorktreeRecords(
+      `worktree /a b\0HEAD ${"a".repeat(40)}\0branch refs/heads/main\0\0worktree /a\nb\0detached\0\0`,
+    ).map((record) => record.path),
     ["/a b", "/a\nb"],
   );
   for (const output of [
@@ -83,9 +81,10 @@ test("NUL worktree porcelain is parsed without unquoting or newline splitting", 
     "worktree /a\n\n",
     "HEAD abc\0\0",
     "worktree relative\0\0",
+    "worktree /a\0HEAD invalid\0\0",
     "worktree /a\0\0worktree /a\0\0",
   ]) {
-    assert.throws(() => parseWorktreePaths(output));
+    assert.throws(() => parseWorktreeRecords(output));
   }
 });
 

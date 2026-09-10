@@ -29,7 +29,7 @@ const readGit = async (
   location: GitLocation,
   args: string[],
   signal?: AbortSignal,
-  detachedAllowed = false,
+  allowMissingRef = false,
 ): Promise<{ stdout: string; code: number }> => {
   try {
     const { stdout } = await exec(
@@ -74,27 +74,13 @@ const readGit = async (
     );
     return { stdout, code: 0 };
   } catch (cause) {
-    if (detachedAllowed && hasErrorCode(cause, 1)) return { stdout: "", code: 1 };
+    signal?.throwIfAborted();
+    if (allowMissingRef && hasErrorCode(cause, 1)) return { stdout: "", code: 1 };
     throw new Error(
       "Read-only Git discovery failed; inspect the repository's metadata/configuration on the host",
       { cause },
     );
   }
-};
-
-/** NUL porcelain avoids Git's quoting of paths containing spaces/newlines. No status cache. */
-export const parseWorktreePaths = (output: string): string[] => {
-  if (!output.endsWith("\0\0")) throw new Error("Invalid Git worktree porcelain output");
-  const paths = output
-    .slice(0, -2)
-    .split("\0\0")
-    .map((record) => {
-      const first = record.split("\0", 1)[0];
-      if (!first?.startsWith("worktree /")) throw new Error("Invalid Git worktree path record");
-      return first.slice("worktree ".length);
-    });
-  if (new Set(paths).size !== paths.length) throw new Error("Duplicate Git worktree paths");
-  return paths;
 };
 
 export const isAuthorizedWorktree = (config: HostConfig, path: string): boolean => {
@@ -174,13 +160,10 @@ export const discoverCurrentWorktree = async (
   ) {
     throw new Error("Start the launcher inside a worktree authorized by the host config");
   }
-  const main = await locateGit(config, config.repositoryPath);
-  const paths = parseWorktreePaths(
-    (await readGit(main, ["worktree", "list", "--porcelain", "-z"], signal)).stdout,
-  );
-  const worktreePath = paths
-    .filter((path) => isAuthorizedWorktree(config, path) && containsPath(path, canonicalCwd))
-    .sort((a, b) => b.length - a.length)[0];
+  const records = await listGitWorktrees(config, signal);
+  const worktreePath = records.find(
+    ({ path }) => isAuthorizedWorktree(config, path) && containsPath(path, canonicalCwd),
+  )?.path;
   if (!worktreePath)
     throw new Error("Current directory is not a linked worktree in the authorized repository");
   // Do not silently select the outer project when cwd is in a nested repository/submodule.

@@ -1,4 +1,13 @@
-ARG PI_BASE_IMAGE
+ARG PI_BASE_IMAGE=base
+FROM node:24-bookworm-slim AS base
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends bash ca-certificates git ripgrep \
+    && rm -rf /var/lib/apt/lists/*
+COPY package.json /tmp/pi-worktree-package.json
+RUN npm install --global --ignore-scripts \
+    "@earendil-works/pi-coding-agent@$(node -p 'require("/tmp/pi-worktree-package.json").devDependencies["@earendil-works/pi-coding-agent"]')" \
+    && rm /tmp/pi-worktree-package.json
+
 FROM node:24-bookworm-slim AS build
 WORKDIR /build
 COPY package.json package-lock.json ./
@@ -7,7 +16,7 @@ COPY tsconfig.json tsconfig.build.json ./
 COPY src ./src
 RUN npm run build && npm prune --omit=dev --ignore-scripts
 
-# Existing trusted image must provide Node 24+, Pi, Git, bash and a POSIX shell.
+# Optionally replace the bundled base with a trusted image providing Node 24+, Pi, Git and bash.
 FROM ${PI_BASE_IMAGE}
 USER 0:0
 COPY --from=build /build/package.json /opt/pi-worktree/package.json

@@ -21,8 +21,9 @@ export const readRegularFile = async (path: string, maxBytes: number) => {
   }
 };
 
+/** Lexical containment for canonical absolute paths; does not follow symlinks. */
 export const containsPath = (parent: string, child: string): boolean => {
-  return parent === child || child.startsWith(parent + "/");
+  return parent === child || child.startsWith(parent === "/" ? parent : `${parent}/`);
 };
 
 export const pathsOverlap = (a: string, b: string): boolean => {

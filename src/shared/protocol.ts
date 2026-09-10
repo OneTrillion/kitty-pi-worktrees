@@ -108,3 +108,9 @@ export const ResponseSchema = z.union([
   }),
 ]);
 export type Response = z.infer<typeof ResponseSchema>;
+export type FailureResponse = Extract<Response, { ok: false }>;
+
+export const failureResponse = (
+  code: FailureResponse["error"]["code"],
+  message: string,
+): FailureResponse => ({ version: PROTOCOL_VERSION, ok: false, error: { code, message } });
